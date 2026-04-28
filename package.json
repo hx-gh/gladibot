@@ -1,0 +1,21 @@
+{
+  "name": "gladibot",
+  "version": "0.1.0",
+  "description": "Gladiatus automation bot using Playwright for session + AJAX for actions",
+  "type": "module",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "loop": "node src/index.js --loop",
+    "tick": "node src/index.js --once",
+    "postinstall": "playwright install msedge || playwright install chromium"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.49.1"
+  }
+}

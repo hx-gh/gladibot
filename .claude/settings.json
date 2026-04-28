@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(jq:*)",
+      "Bash(cat:*)",
+      "Bash(npm install)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "mcp__browsermcp__browser_snapshot",
+      "mcp__browsermcp__browser_navigate",
+      "mcp__browsermcp__browser_screenshot",
+      "mcp__browsermcp__browser_click",
+      "mcp__browsermcp__browser_wait",
+      "mcp__browsermcp__browser_type",
+      "mcp__browsermcp__browser_press_key",
+      "mcp__browsermcp__browser_hover",
+      "mcp__browsermcp__browser_get_console_logs"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["browsermcp"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e 'const fs=require(\"fs\");let i=\"\";process.stdin.on(\"data\",c=>i+=c).on(\"end\",()=>{try{const j=JSON.parse(i);const f=j.tool_input&&j.tool_input.file_path||\"\";const t=j.tool_name||\"\";if(f && /\\/(src|docs)\\//.test(f)){fs.mkdirSync(\"docs/wip\",{recursive:true});fs.appendFileSync(\"docs/wip/.session-changes.log\",new Date().toISOString()+\" \"+t+\" \"+f+\"\\n\");}}catch(e){}});'"
+          }
+        ]
+      }
+    ]
+  }
+}
