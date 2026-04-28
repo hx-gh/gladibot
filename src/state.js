@@ -1,40 +1,40 @@
-// Parser de estado a partir do HTML da página de overview, e merge com o
-// JSON retornado por endpoints AJAX (heal, etc). O JSON é mais confiável; o
-// HTML é só fallback inicial.
+// Parser do HTML da página overview do Gladiatus. Extrai estado por IDs
+// específicos (não regex genérico) — confere com a estrutura observada em
+// produção (BR62 Speed x5, página com header padrão).
 
-const NUM = /[\d.]+/;
-
-function num(s) {
-  if (!s) return null;
-  const m = s.replace(/\./g, '').match(/\d+/);
-  return m ? parseInt(m[0], 10) : null;
+function toInt(s) {
+  if (s === null || s === undefined) return null;
+  const cleaned = String(s).replace(/[.\s]/g, '');
+  const n = parseInt(cleaned, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
-// Extracts X/Y from a string like "Pontos de vida 2483 / 2711" or "21 / 24"
-function parseFraction(s) {
-  const m = s && s.match(/(\d[\d.]*)\s*\/\s*(\d[\d.]*)/);
+function rxOne(html, re) {
+  const m = html.match(re);
+  return m ? m[1] : null;
+}
+
+// `new ProgressBar('cooldown_bar_text_<slot>', ..., start, current, end)`
+// Retorna segundos restantes, 0 se já está pronto, null se não achou.
+function extractCooldown(html, slot) {
+  const re = new RegExp(
+    `new\\s+ProgressBar\\([\\s\\S]*?'cooldown_bar_text_${slot}'[\\s\\S]*?(\\d{9,}),\\s*(\\d{9,}),\\s*(\\d{9,})\\s*\\)`
+  );
+  const m = html.match(re);
   if (!m) return null;
-  return { value: num(m[1]), max: num(m[2]) };
+  const current = parseInt(m[2], 10);
+  const end = parseInt(m[3], 10);
+  return Math.max(0, end - current);
 }
 
-// Cooldown text: "0:00:57" => seconds. "Ir em Expedição" / "Pronto" => 0.
-function parseCooldown(s) {
-  if (!s) return null;
-  const m = s.match(/(\d+):(\d{2}):(\d{2})/);
-  if (m) return parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
-  if (/Ir em|Ir para|Pronto|Para o/.test(s)) return 0;
-  return null;
-}
-
-// Parse the overview HTML into a State. Picks fields out of well-known
-// patterns; if a field is missing we leave it null instead of guessing.
 export function parseOverview(html) {
   const state = {
-    gold: null,
-    rubies: null,
-    hpPercent: null,
+    gold: toInt(rxOne(html, /id="sstat_gold_val"[^>]*>([\d.,]+)</)),
+    rubies: toInt(rxOne(html, /id="sstat_ruby_val"[^>]*>([\d.,]+)</)),
+    level: toInt(rxOne(html, /id="header_values_level"[^>]*>(\d+)</)),
+    expPercent: toInt(rxOne(html, /id="header_values_xp_percent"[^>]*>(\d+)%</)),
+    hpPercent: toInt(rxOne(html, /id="header_values_hp_percent"[^>]*>(\d+)%</)),
     hp: null,
-    expPercent: null,
     expedition: { points: null, max: null, cooldownSec: null },
     dungeon: { points: null, max: null, cooldownSec: null },
     arena: { cooldownSec: null },
@@ -42,45 +42,29 @@ export function parseOverview(html) {
     inventoryFood: [],
   };
 
-  // Header resource line. The page shows: gold rubies hp% exp%
-  // We pull from data attributes when present, falling back to plain text.
-  const headerMatch = html.match(/id=["']header[\s\S]{0,4000}/);
-  const headerHtml = headerMatch ? headerMatch[0] : html;
-
-  state.gold = num((headerHtml.match(/icon_gold[^>]*>\s*([\d.]+)/) || [])[1]) ??
-               num((headerHtml.match(/gold["']?\s*:\s*\{[^}]*?value["']?\s*:\s*(\d+)/) || [])[1]);
-  state.rubies = num((headerHtml.match(/icon_ruby[^>]*>\s*([\d.]+)/) || [])[1]);
-
-  // HP absolute via tooltip on health bar: "Pontos de vida:","2711 \/ 2711"
-  const hpTip = html.match(/Pontos de vida:?[^"]*?",\s*"(\d+)\s*\\?\/\s*(\d+)/);
-  if (hpTip) {
-    state.hp = { value: parseInt(hpTip[1], 10), max: parseInt(hpTip[2], 10) };
-    state.hpPercent = Math.round((state.hp.value / state.hp.max) * 100);
+  // HP absoluto via data-attributes em #header_values_hp_bar
+  const hpV = rxOne(html, /id="header_values_hp_bar"[^>]*data-value="(\d+)"/);
+  const hpM = rxOne(html, /id="header_values_hp_bar"[^>]*data-max-value="(\d+)"/);
+  if (hpV && hpM) {
+    state.hp = { value: parseInt(hpV, 10), max: parseInt(hpM, 10) };
+    if (state.hpPercent === null && state.hp.max > 0) {
+      state.hpPercent = Math.round((100 * state.hp.value) / state.hp.max);
+    }
   }
 
-  // Slot CTAs: text "Ir em Expedição" or a countdown timer "0:00:57"
-  // The slot order on Gladiatus headers is: expedition, dungeon, arena, grouparena
-  // Their containers carry data-tooltip with cooldown info; falling back to visible text.
-  const slotTexts = [...html.matchAll(/class=["']charmercInfo[^"']*?["'][^>]*>([\s\S]{0,200}?)<\/div>/g)]
-    .map(m => m[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  // Pontos de expedição/masmorra
+  state.expedition.points = toInt(rxOne(html, /id="expeditionpoints_value_point"[^>]*>(\d+)</));
+  state.expedition.max = toInt(rxOne(html, /id="expeditionpoints_value_pointmax"[^>]*>(\d+)</));
+  state.dungeon.points = toInt(rxOne(html, /id="dungeonpoints_value_point"[^>]*>(\d+)</));
+  state.dungeon.max = toInt(rxOne(html, /id="dungeonpoints_value_pointmax"[^>]*>(\d+)</));
 
-  if (slotTexts[0]) state.expedition.cooldownSec = parseCooldown(slotTexts[0]);
-  if (slotTexts[1]) state.dungeon.cooldownSec = parseCooldown(slotTexts[1]);
-  if (slotTexts[2]) state.arena.cooldownSec = parseCooldown(slotTexts[2]);
-  if (slotTexts[3]) state.grouparena.cooldownSec = parseCooldown(slotTexts[3]);
+  // Cooldowns das ProgressBar JS
+  state.expedition.cooldownSec = extractCooldown(html, 'expedition');
+  state.dungeon.cooldownSec = extractCooldown(html, 'dungeon');
+  state.arena.cooldownSec = extractCooldown(html, 'arena');
+  state.grouparena.cooldownSec = extractCooldown(html, 'ct');
 
-  // Points "X / Y" appear as text near the slot icons; fall back to scanning all fractions
-  const fractions = [...html.matchAll(/(\d+)\s*\/\s*(\d+)/g)]
-    .map(m => ({ value: parseInt(m[1], 10), max: parseInt(m[2], 10) }))
-    .filter(f => f.max <= 24); // expedition/dungeon caps are 24
-  if (fractions.length >= 2) {
-    state.expedition.points = fractions[0].value;
-    state.expedition.max = fractions[0].max;
-    state.dungeon.points = fractions[1].value;
-    state.dungeon.max = fractions[1].max;
-  }
-
-  // Inventory food (data-content-type="64")
+  // Inventário (só presente em mod=overview, não em training etc.)
   const itemRe = /<div\b[^>]*\bdata-content-type=["']64["'][^>]*>/g;
   for (const m of html.matchAll(itemRe)) {
     const tag = m[0];
@@ -123,8 +107,8 @@ export function parseOverview(html) {
   return state;
 }
 
-// Merge the partial state we parsed from HTML with the authoritative JSON
-// the server returns from heal/fight responses (header.health, etc).
+// Merge defensivo com response JSON do servidor (heal/fight). header.* é fonte
+// de verdade quando disponível.
 export function mergeAjaxResponse(state, json) {
   if (!json || typeof json !== 'object') return state;
   const h = json.header;
@@ -139,23 +123,23 @@ export function mergeAjaxResponse(state, json) {
     state.expedition.points = h.expedition.points;
     state.expedition.max = h.expedition.pointsMax;
     if (h.expedition.cooldown) {
-      const remaining = h.expedition.cooldown.end - h.expedition.cooldown.time;
-      state.expedition.cooldownSec = Math.max(0, remaining);
+      state.expedition.cooldownSec = Math.max(0, h.expedition.cooldown.end - h.expedition.cooldown.time);
     }
   }
   if (h.dungeon) {
     state.dungeon.points = h.dungeon.points;
     state.dungeon.max = h.dungeon.pointsMax;
     if (h.dungeon.cooldown) {
-      const remaining = h.dungeon.cooldown.end - h.dungeon.cooldown.time;
-      state.dungeon.cooldownSec = Math.max(0, remaining);
+      state.dungeon.cooldownSec = Math.max(0, h.dungeon.cooldown.end - h.dungeon.cooldown.time);
     }
   }
   return state;
 }
 
 export function summarizeState(state) {
-  const hpStr = state.hp ? `${state.hp.value}/${state.hp.max} (${state.hpPercent}%)` : `${state.hpPercent ?? '?'}%`;
+  const hpStr = state.hp
+    ? `${state.hp.value}/${state.hp.max} (${state.hpPercent}%)`
+    : `${state.hpPercent ?? '?'}%`;
   const exp = state.expedition;
   const dung = state.dungeon;
   return [

@@ -17,24 +17,6 @@ Quando o projeto crescer e justificar, separar em prefixos finos (`SEC`, `INFRA`
 
 ## Abertos
 
-### DEBT-01 — Endpoint de iniciar trabalho ("Ir!") não capturado
-
-**Arquivo**: `src/actions/work.js`
-**Problema**: O botão "Ir!" da página `mod=work` envia uma request AJAX que ainda não foi capturada via DevTools. Bot loga warning e fica idle quando ambos os pontos zeram.
-**Impacto**: 🟠 Alto — sem isso, o bot não cumpre o ciclo completo e fica parado quando os pontos esgotam.
-**Ação**: Próxima vez que o usuário clicar "Ir!" manualmente com DevTools Network aberto, copiar como cURL. Plugar no `actions/work.js` seguindo o padrão de `actions/heal.js`.
-**Esforço**: ~30 min (captura + impl + teste)
-**Prioridade**: 🟠
-
-### DEBT-02 — Endpoint de reiniciar masmorra ("Normal") não capturado
-
-**Arquivo**: `src/actions/dungeon.js`
-**Problema**: Após boss derrotado, masmorra mostra a tela "Entre na masmorra" com botão Normal. Bot detecta o estado mas pula o ciclo (loga warn).
-**Impacto**: 🟠 Médio — bot eventualmente para de fazer masmorras quando a atual termina, até o usuário clicar Normal manualmente.
-**Ação**: Próxima vez que o boss cair e o usuário clicar Normal, capturar cURL. Adicionar função `restartDungeon` em `actions/dungeon.js` chamada quando `isDungeonEntryPage(html)` é true.
-**Esforço**: ~30 min
-**Prioridade**: 🟠
-
 ### DEBT-03 — Refresh de sessão expirada não-automático
 
 **Arquivo**: `src/browser.js`, `src/index.js`
@@ -68,4 +50,5 @@ Quando o projeto crescer e justificar, separar em prefixos finos (`SEC`, `INFRA`
 
 | ID | Descrição | Data | Ref |
 |---|---|---|---|
-| _(nenhum ainda)_ | | | |
+| DEBT-01 | Endpoint "Ir!" do trabalho capturado e plugado em `src/actions/work.js` (POST `index.php?mod=work&submod=start` com `jobType`+`timeToWork`) | 2026-04-28 | sessão 2026-04-28 |
+| DEBT-02 | Endpoint "Normal" da masmorra capturado e plugado em `src/actions/dungeon.js` (POST `index.php?mod=dungeon&loc=<loc>` com `dif1=Normal`); fix do `isDungeonEntryPage` (input, não button) | 2026-04-28 | sessão 2026-04-28 |

@@ -8,12 +8,27 @@ export async function launch() {
   const dir = path.resolve(config.browser.userDataDir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  log.info(`launching browser (channel=${config.browser.channel}, headless=${config.browser.headless})`);
+  // Playwright: `channel` aponta pra um binário INSTALADO no sistema (chrome,
+  // msedge, chrome-beta, ...). Pra usar o chromium bundled do Playwright,
+  // NÃO passar `channel` — qualquer valor "chromium"/vazio cai nesse caminho.
+  const channel = config.browser.channel;
+  const useBundledChromium = !channel || channel.toLowerCase() === 'chromium';
+  log.info(
+    `launching browser (channel=${useBundledChromium ? 'bundled chromium' : channel}, headless=${config.browser.headless})`
+  );
   const ctx = await chromium.launchPersistentContext(dir, {
-    channel: config.browser.channel,
+    ...(useBundledChromium ? {} : { channel }),
     headless: config.browser.headless,
     viewport: { width: 1280, height: 800 },
-    args: ['--disable-blink-features=AutomationControlled'],
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      // WSLg: sem `--window-position` o chromium bundled abre a janela "invisível"
+      // (presumivelmente fora dos limites visíveis). Forçar 0,0 + start-maximized
+      // garante que aparece na área de trabalho do Windows.
+      '--window-position=0,0',
+      '--window-size=1280,800',
+      '--start-maximized',
+    ],
   });
 
   const page = ctx.pages()[0] || (await ctx.newPage());
@@ -22,21 +37,42 @@ export async function launch() {
 
 // Returns true if the page is the in-game (logged in on the configured server).
 function isInGame(page) {
-  return page.url().startsWith(`${config.baseUrl}/game/index.php`);
+  try {
+    return page.url().startsWith(`${config.baseUrl}/game/index.php`);
+  } catch {
+    return false; // page closed
+  }
 }
 
-// Opens the lobby URL. If we're not already in the game, waits for the user to
-// finish login and select the configured server. Headless mode cannot do this
-// (no UI for login), so it errors out clearly.
-export async function ensureLoggedIn(page) {
+// Polls all pages of the context and resolves with the first one that lands on
+// the in-game URL. Handles the lobby-opens-new-tab flow (game opens in a sibling
+// page, not in the lobby page itself).
+function waitForGamePage(ctx, intervalMs = 500) {
+  return new Promise((resolve) => {
+    const tick = () => {
+      for (const p of ctx.pages()) {
+        if (isInGame(p)) return resolve(p);
+      }
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+
+// Opens the lobby URL. Returns the page that is in-game — may be the same one
+// passed in, or a NEW tab opened when the user clicked "Jogar" in the lobby.
+// Caller must use the returned page from there on (not the original).
+export async function ensureLoggedIn(ctx, initialPage) {
   log.info(`Opening lobby: ${config.lobbyUrl}`);
-  await page.goto(config.lobbyUrl, { waitUntil: 'domcontentloaded' }).catch((e) => {
+  await initialPage.goto(config.lobbyUrl, { waitUntil: 'domcontentloaded' }).catch((e) => {
     log.warn(`lobby goto warning: ${e.message}`);
   });
 
-  if (isInGame(page)) {
+  // Maybe an existing tab is already in-game (session restored after a refresh)
+  const existing = ctx.pages().find(isInGame);
+  if (existing) {
     log.info('Already in-game (session restored).');
-    return;
+    return existing;
   }
 
   if (config.browser.headless) {
@@ -45,30 +81,53 @@ export async function ensureLoggedIn(page) {
     );
   }
 
-  log.warn('Lobby aberto. Faça login no Google e entre no servidor configurado.');
-  log.warn(`Aguardando sua entrada em ${config.baseUrl}/game/index.php ...`);
-  await page.waitForURL((url) => url.toString().startsWith(`${config.baseUrl}/game/index.php`), {
-    timeout: 0,
-  });
-  log.info('Entrada no jogo detectada.');
+  log.warn('Lobby aberto. Faça login no Google e clique em "Jogar" no servidor configurado.');
+  log.warn('O jogo costuma abrir em NOVA ABA — não feche a aba do lobby até ver "Entrada no jogo detectada".');
+  log.warn(`Aguardando alguma aba chegar em ${config.baseUrl}/game/index.php ...`);
+
+  const gamePage = await waitForGamePage(ctx);
+  log.info(`Entrada no jogo detectada: ${gamePage.url().slice(0, 100)}`);
+  return gamePage;
 }
 
-// Reads sh + csrf from the current overview page. Caller is expected to
-// already be on /game/index.php?mod=overview (or call refreshSession to navigate).
+// Lê sh + csrf da página. SEMPRE navega pra overview primeiro pra garantir
+// uma página canônica completamente carregada — assim funciona mesmo quando
+// o caller acabou de chegar via lobby (URL pode ainda estar em trampolim).
+//
+// Estruturas observadas no HTML real (BR62):
+//   <meta name="csrf-token" content="<HEX64>">
+//   var secureHash = "<HEX32>";
+//   ?sh=<HEX32> em todos os links/URL
 export async function readSession(page) {
+  await page.goto(`${config.baseUrl}/game/index.php?mod=overview`, {
+    waitUntil: 'domcontentloaded',
+  });
+
   const url = page.url();
-  const sh = (url.match(/[?&]sh=([a-f0-9]+)/) || [])[1];
   const html = await page.content();
+
+  // sh: query param da URL (rota canônica), com fallback pro `var secureHash`.
+  const sh =
+    (url.match(/[?&]sh=([a-f0-9]+)/) || [])[1] ||
+    (html.match(/var\s+secureHash\s*=\s*["']([a-f0-9]+)["']/) || [])[1] ||
+    null;
+
+  // csrf: meta tag (formato observado).
   const csrf =
-    (html.match(/csrf[_-]?token['":=\s]+["']?([a-f0-9]{64})/i) || [])[1] ||
-    (await page.evaluate(() => window.csrfToken || null));
+    (html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([a-f0-9]{64})["']/i) || [])[1] ||
+    null;
+
   if (!sh || !csrf) {
-    throw new Error('Could not extract sh/csrf from current page');
+    log.error(`readSession failed. URL=${url}`);
+    log.error(`HTML head (first 600): ${html.slice(0, 600).replace(/\s+/g, ' ')}`);
+    const grep = html.match(/.{0,40}(csrf-token|secureHash).{0,200}/);
+    log.error(`grep: ${grep ? grep[0].slice(0, 300) : '<no match>'}`);
+    throw new Error(
+      `Could not extract sh/csrf (sh=${sh ? 'OK' : 'MISSING'}, csrf=${csrf ? 'OK' : 'MISSING'})`
+    );
   }
   return { sh, csrf };
 }
 
-export async function refreshSession(page) {
-  await page.goto(`${config.baseUrl}/game/index.php?mod=overview`, { waitUntil: 'domcontentloaded' });
-  return readSession(page);
-}
+// Mantido para compatibilidade — readSession já navega.
+export const refreshSession = readSession;

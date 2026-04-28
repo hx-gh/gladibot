@@ -67,10 +67,24 @@ export class GladiatusClient {
     return text;
   }
 
-  getHtml(path, params) {
-    return this._exec('GET', this.buildUrl(path, params), {
-      headers: { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-    });
+  async getHtml(path, params) {
+    // For HTML pages we NAVIGATE (so the page's JS runs and the DOM is fully
+    // populated). page.request is HTTP-only and would skip JS — that breaks
+    // any field rendered client-side.
+    const url = this.buildUrl(path, params);
+    log.debug('NAVIGATE', url);
+    await this.page.goto(url, { waitUntil: 'domcontentloaded' });
+    const html = await this.page.content();
+    if (config.logLevel === 'debug') {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const outDir = 'docs/wip';
+        fs.mkdirSync(outDir, { recursive: true });
+        fs.writeFileSync(path.join(outDir, 'last-overview.html'), html);
+      } catch (_) { /* non-fatal */ }
+    }
+    return html;
   }
 
   getAjax(path, params) {

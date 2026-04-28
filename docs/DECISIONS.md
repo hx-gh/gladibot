@@ -45,6 +45,49 @@ updated: 2026-04-28
 
 ---
 
+### [DEC-05] Parser do overview via IDs específicos do DOM
+
+**Data:** 2026-04-28
+**Contexto:** Primeira tentativa do parser foi via regex genérico (`(\d+)\s*/\s*(\d+)`) procurando padrões "X/Y" no HTML. Resultado: capturava lixo (`exp=34/8`) porque o HTML tem dezenas de pares numéricos não-relacionados (timers, dimensões CSS, etc).
+**Decisão:** Parser usa **IDs e atributos específicos do Gladiatus** observados no HTML real:
+- `#sstat_gold_val`, `#sstat_ruby_val` → ouro/rubis
+- `#header_values_hp_bar[data-value][data-max-value]` → HP absoluto
+- `#expeditionpoints_value_point` + `_pointmax` → pontos de expedição
+- `#dungeonpoints_value_point` + `_pointmax` → pontos de masmorra
+- Chamadas `new ProgressBar(...)` em JS para extrair cooldowns (timestamps epoch start/current/end)
+- `<meta name="csrf-token" content="...">` para o CSRF
+- Inventário via `data-content-type="64"` + `data-tooltip` JSON-encoded
+
+**Alternativas rejeitadas:**
+- *Regex genérico*: rejeitado pelos falsos positivos.
+- *page.evaluate via Playwright*: mais lento (round-trip ao browser), só vale se DOM mudasse muito — não é o caso.
+**Consequências:** Parser fica acoplado à estrutura HTML do Gladiatus (BR62). Se patch do jogo mudar IDs, quebra — mas falha clara (campo vira `null`), fácil de detectar e corrigir. Confirmado funcionando: TICK reporta `HP=2736/2736 (100%) gold=11091 exp=24/24 dung=22/24 food=9` com valores reais.
+
+---
+
+### [DEC-06] Lobby URL como entrada (vs `mod=overview` direto)
+
+**Data:** 2026-04-28
+**Contexto:** Bot precisa do usuário fazer login Google manualmente. Lobby (`lobby.gladiatus.gameforge.com`) é a entrada natural; usuário escolhe servidor lá. Clicar "Jogar" abre **nova aba** no servidor configurado.
+**Decisão:** Bot abre na lobby via `LOBBY_URL` (configurável). `ensureLoggedIn` observa **todas as abas do contexto** via polling em `ctx.pages()` e retorna a aba que aterrisar em `${BASE_URL}/game/index.php`. `index.js` usa essa aba dali pra frente — não a inicial.
+**Alternativas rejeitadas:**
+- *Abrir direto em `mod=overview`*: o servidor redireciona pra login do Gameforge, fluxo de login fica menos natural. E se sessão expirou, perde o contexto da escolha de servidor.
+- *Observar só `page` inicial*: quebra quando "Jogar" abre nova aba (caso real reportado pelo user).
+**Consequências:** Usuário deve **deixar a aba do lobby aberta** durante a sessão (fechar pode levar Chromium a derrubar o popup-opener). Bot é robusto a multi-aba mas não é robusto a fechamento prematuro do opener.
+
+---
+
+### [DEC-07] `client.getHtml` via `page.goto` (com JS), não `page.request`
+
+**Data:** 2026-04-28
+**Contexto:** Inicialmente `getHtml` usava `page.request.get` (HTTP puro). Resultado: HTML retornado pelo servidor não tinha tooltips JSON nem alguns campos populados via JS — parser falhava.
+**Decisão:** `getHtml` agora navega a página real (`page.goto`) e retorna `page.content()`. JS roda, DOM fica completo, parser tem tudo. `getAjax` e `postForm` continuam usando `page.request` (endpoints AJAX retornam dados crus).
+**Alternativas rejeitadas:**
+- *Manter `page.request` + injetar JS via `page.evaluate`*: complexo demais, gasto de manutenção.
+**Consequências:** State fetch fica ~500ms-1s mais lento (navegação completa), mas isso é desprezível ante o cooldown de 60s entre ataques. Side-effect bom: `sh` da URL fica sempre fresco, e cookies são atualizados pelo servidor a cada visita.
+
+---
+
 ### [DEC-04] Documentação espelhando o sistema do webservices-core
 
 **Data:** 2026-04-28

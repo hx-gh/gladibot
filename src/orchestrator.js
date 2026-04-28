@@ -25,18 +25,23 @@ function sleepUntil(state) {
 // One tick: read state, do every action that's ready *right now*, return
 // next sleep duration. The user's clarified semantic: expedition AND dungeon
 // fire on the same tick when both are off cooldown, then we sleep.
+async function maybeHeal(client, state, label) {
+  const heal = await healIfNeeded(client, state);
+  if (heal.acted) {
+    log.info(`  after heal (${label}):`, summarizeState(mergeAjaxResponse(state, heal.json)));
+    return mergeAjaxResponse(state, heal.json);
+  }
+  log.debug(`  heal skipped (${label}):`, heal.reason);
+  return state;
+}
+
 export async function tick(client) {
   let state = await fetchState(client);
   log.info('TICK', summarizeState(state));
 
-  // 1. Heal first (so subsequent fights start with the most HP we can spare)
-  const heal = await healIfNeeded(client, state);
-  if (heal.acted) {
-    state = mergeAjaxResponse(state, heal.json);
-    log.info('  after heal:', summarizeState(state));
-  } else {
-    log.debug('  heal skipped:', heal.reason);
-  }
+  // 1. Heal pre-fight — cobre cenário de startup com HP crítico (ou HP que
+  //    ficou crítico no fim do tick anterior, esperando dormir o cooldown).
+  state = await maybeHeal(client, state, 'pre');
 
   // 2. Expedition (if free)
   const exp = await attackExpedition(client, state);
@@ -59,8 +64,14 @@ export async function tick(client) {
     await startWork(client, state);
   }
 
-  // 5. Re-pull state to recompute next sleep window with fresh cooldowns
+  // 5. Re-pull state — fresh cooldowns + HP pós-luta
   const fresh = await fetchState(client);
+
+  // 6. Heal pós-luta — se a expedição/masmorra deixou o HP abaixo do
+  //    threshold, curamos AGORA (antes de dormir o cooldown), com missing
+  //    grande o suficiente pra usar comida grande sem overflow.
+  await maybeHeal(client, fresh, 'post');
+
   const sleepSec = sleepUntil(fresh);
   log.info(`  next tick in ${sleepSec}s`);
   return sleepSec;

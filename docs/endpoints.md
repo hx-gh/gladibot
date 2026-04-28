@@ -100,17 +100,59 @@ Resposta JSON com:
 
 ## Iniciar trabalho
 
-> **A capturar.** Botão "Ir!" na página `mod=work`. O form tem dois selects (job + duração) e um submit. Provável `POST /game/ajax.php?mod=work&submod=start&job=2&hours=8&...` ou similar.
+```
+POST /game/index.php?mod=work&submod=start&sh=<sh>
+Content-Type: application/x-www-form-urlencoded
+x-csrf-token: <csrf>
 
-Quando capturar, anotar o ID interno do "Rapaz do Estábulo" — pelo data-attribute do option.
+jobType=<id>&timeToWork=<hours>
+```
+
+**Não é AJAX** — é POST de form clássico, resposta HTML (a página `mod=work` re-renderizada com o estado de "trabalhando"). Usar `client.postForm('/game/index.php', { mod:'work', submod:'start' }, { jobType, timeToWork })`.
+
+`jobType` (capturado do HTML do form, atributos `id="job_row_N"` + `setWorkTime(N, ...)`):
+
+| ID | Trabalho | Horas (min-max) | Premium |
+|---|---|---|---|
+| 0 | Senador | 1–24 | sim (3 roupas) |
+| 1 | Joalheiro | 1–4 | sim |
+| 2 | Rapaz do estábulo | 1–8 | não |
+| 3 | Agricultor | 1–6 | não |
+| 4 | Talhante | 1–3 | não |
+| 5 | Pescador | 4–10 | não |
+| 6 | Padeiro | 1–4 | não |
+| 7 | Ferreiro | 12 fixo | não |
+| 8 | Mestre Ferreiro | 6 fixo | sim |
+
+Default do bot: `WORK_JOB=2` (Rapaz do estábulo), `WORK_HOURS=8`.
+
+## Iniciar nova masmorra (botão Normal)
+
+```
+POST /game/index.php?mod=dungeon&loc=<loc>&sh=<sh>
+Content-Type: application/x-www-form-urlencoded
+x-csrf-token: <csrf>
+
+dif1=Normal
+```
+
+**Não é AJAX** — POST de form clássico, resposta HTML (a própria página `mod=dungeon` re-renderizada já com os monstros disponíveis pra `startFight`). Detecção da página de entrada (boss caiu): presença do `<h3>Entre na masmorra</h3>` + `<input name="dif1">`. O botão "Avançado" fica `disabled` abaixo do nível 90.
 
 ## Cancelar masmorra
 
-> **A capturar.** Botão "Cancelar Masmorra" na página da masmorra ativa. Útil pra forçar reinício se a masmorra atual estiver "ruim". Não é parte do loop básico mas útil pra ferramentas.
+```
+POST /game/index.php?mod=dungeon&loc=<loc>&action=cancelDungeon&sh=<sh>
+Content-Type: application/x-www-form-urlencoded
+x-csrf-token: <csrf>
+
+dungeonId=<id>
+```
+
+`dungeonId` é dinâmico — vem do `<input type="hidden" name="dungeonId" value="...">` na própria página da masmorra ativa. Não é parte do loop principal (bot não cancela masmorras automaticamente); fica documentado pra ferramentas/scripts ad-hoc se um dia for útil.
 
 ## Pendências de captura
 
-- [ ] Iniciar nova masmorra (botão Normal)
-- [ ] Iniciar trabalho (botão Ir!)
-- [ ] Cancelar masmorra
+- [x] Iniciar nova masmorra (botão Normal) — 2026-04-28
+- [x] Iniciar trabalho (botão Ir!) — 2026-04-28
+- [x] Cancelar masmorra — 2026-04-28
 - [ ] Refresh "manual" do CSRF (se descobrirmos endpoint)

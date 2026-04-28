@@ -33,15 +33,15 @@ async function main() {
   const { ctx, page } = await launch();
 
   try {
-    await ensureLoggedIn(page);
-    const session = await readSession(page);
+    const gamePage = await ensureLoggedIn(ctx, page);
+    const session = await readSession(gamePage);
     log.info(`session OK (sh=${session.sh.slice(0, 8)}…, csrf=${session.csrf.slice(0, 8)}…)`);
 
     if (!flags.noConfirm) {
       await awaitUserOk('\n>>> Login OK e dentro do jogo. Pressione Enter para iniciar o bot (Ctrl+C cancela)... ');
     }
 
-    const client = new GladiatusClient(page, session);
+    const client = new GladiatusClient(gamePage, session);
     log.info(`gladibot starting (mode=${flags.loop ? 'loop' : 'once'})`);
 
     let stopping = false;

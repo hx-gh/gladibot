@@ -21,6 +21,7 @@ export const config = {
     thresholdPct: parseInt(process.env.HEAL_THRESHOLD_PCT || '20', 10),
   },
   work: {
+    job: parseInt(process.env.WORK_JOB || '2', 10),
     hours: parseInt(process.env.WORK_HOURS || '8', 10),
   },
   loop: {
