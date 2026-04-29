@@ -21,22 +21,23 @@ const JOB_HOUR_LIMITS = {
   5: [4, 10], 6: [1, 4], 7: [12, 12], 8: [6, 6],
 };
 
-export async function startWork(client, state) {
+export async function startWork(client, state, opts = {}) {
   if (!isActionsEnabled()) {
     return { acted: false, reason: 'actions disabled' };
   }
-  if ((state.expedition.points ?? 0) > 0 || (state.dungeon.points ?? 0) > 0) {
+  if (!opts.force && ((state.expedition.points ?? 0) > 0 || (state.dungeon.points ?? 0) > 0)) {
     return { acted: false, reason: 'still has expedition or dungeon points' };
   }
 
-  const job = config.work.job;
+  const job = opts.jobType ?? config.work.job;
   const limits = JOB_HOUR_LIMITS[job];
   if (!limits) {
     log.warn(`WORK unknown jobType=${job} — skipping`);
     return { acted: false, reason: `unknown job ${job}` };
   }
   const [minH, maxH] = limits;
-  const hours = Math.max(minH, Math.min(maxH, config.work.hours));
+  const requested = opts.hours ?? config.work.hours;
+  const hours = Math.max(minH, Math.min(maxH, requested));
 
   log.info(`WORK start job=${job} hours=${hours}`);
   const html = await client.postForm('/game/index.php', {

@@ -6,3 +6,7 @@ logs/
 .DS_Store
 .claude/settings.local.json
 data/raw/
+data/state.db
+data/state.db-journal
+data/state.db-shm
+data/state.db-wal

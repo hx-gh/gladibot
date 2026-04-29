@@ -198,6 +198,58 @@ updated: 2026-04-28
 
 ---
 
+### [DEC-16] AFK fallback: HP baixo + sem comida → Rapaz do Estábulo 8h
+
+**Data:** 2026-04-29
+**Contexto:** Cenário não coberto no orchestrator: HP < `HEAL_THRESHOLD_PCT` **e** inventário sem comida, mas ainda há pontos de expedição/masmorra. Antes, `healIfNeeded` retornava `{ acted: false, reason: 'no food in inventory' }` silenciosamente e o tick seguia atacando — risco de morte. Como pontos de expedição/masmorra **não regeneram com o tempo** (só HP regenera), "dormir o tick esperando reset" não é alternativa: o bot ficaria travado pra sempre.
+**Decisão:** Novo passo 1b no `tick`, logo após o pre-heal: se `(state.inventoryFood ?? []).length === 0 && state.hpPercent < config.heal.thresholdPct`, dispara `startWork(client, state, { force: true, jobType: 2, hours: 8 })` e retorna direto pro próximo tick. `startWork` ganhou param `opts = { force, jobType, hours }`: `force` ignora o gate de "ainda tem pontos"; `jobType`/`hours` sobrescrevem o config. Job hardcoded como Rapaz do Estábulo (id=2) por 8h (max do range [1,8]) — tempo suficiente pra HP cheio mesmo em cenário extremo (regen 3.294/h, HP máx 2.736).
+**Alternativas rejeitadas:**
+- *Dormir o tick (sem ir trabalhar)*: pontos não regeneram, bot trava.
+- *Usar o config.work.hours/job sem override*: usuário pode mudar config pra job mais curto pensando em outros cenários; o fallback AFK precisa garantir tempo longo independente.
+- *Ferreiro 12h*: longo demais — desperdiça pontos parados após HP regenerar (regen completa em ~50min real em Speed x5, vs 12h shift = 144 min real).
+- *Comprar comida via mercado antes de trabalhar*: depende de Painel 3 (Forja/Lojas), ainda não implementado.
+**Consequências:**
+- Bot deixa de morrer em cenário AFK com inventário vazio.
+- Próximo tick detecta `working` via `mod=work` (DEC-09) e dorme até o shift acabar.
+- Quando shift termina, HP está cheio mas inventário continua vazio — heal sem efeito, ataques rolam normalmente; se HP cair de novo abaixo do threshold sem food, o ciclo se repete (vai trabalhar de novo).
+- `config.work.hours`/`config.work.job` continuam sendo o default do passo 4 (work fallback "pontos zerados"); só o caminho 1b força jobType=2/hours=8.
+
+---
+
+### [DEC-17] Flag `noXhr` em `client.fetchRawHtml` para troca de doll
+
+**Data:** 2026-04-29
+**Contexto:** Pra ler stats/gear dos 6 dolls (principal + espelho + 4 mercs) o bot precisa GET `mod=overview&doll=N`. Primeiro teste com `client.fetchRawHtml` retornou **sempre o doll=1** — comparação dos 3 samples mostrou mesmos `data-item-id` e `playername` em todas as URLs. Investigação do JS do jogo (`game.js`): `selectDoll(a){document.location.href=a}` é só uma navegação simples, então o problema estava no header `x-requested-with: XMLHttpRequest` que o `_exec` injeta em **todas** as requests. O servidor PHP do Gladiatus interpreta XHR como AJAX e cai num path que ignora `?doll=N`.
+**Decisão:** Adicionar opção `noXhr: true` em `client._exec` (e expor via `fetchRawHtml(path, params, { noXhr: true })`). Quando `true`, **omite** o header `x-requested-with`. `csrf-token` continua. Default do `fetchRawHtml`/outros métodos: `noXhr=false` (envia XHR header como antes — compat preservada). `actions/characters.js` é o único caller atual com `noXhr=true`.
+**Alternativas rejeitadas:**
+- *Usar `client.getHtml` (page.goto)*: `getHtml` navega a aba do bot, fazendo race com o orchestrator (que roda navigations próprias no tick). Não-iniciante.
+- *Sempre omitir o XHR header*: quebraria comportamento dos endpoints AJAX que dependem dele (heal, attack, training).
+- *Manter cookie/sessão "current doll" via clique simulado*: complexo, fragiliza, e o `selectDoll` JS já é só `location.href`.
+**Consequências:** Trade-off mínimo — flag opt-in, comportamento default inalterado. Endpoint `mod=overview&doll=N` agora funciona corretamente. Documentado em `endpoints.md` como ressalva pra qualquer GET futuro que branche em XHR vs navegação.
+
+---
+
+### [DEC-18] SQLite via `node:sqlite` (built-in) para estado dos chars
+
+**Data:** 2026-04-29
+**Contexto:** Painel 4 (Personagens / Mercenários) precisa persistir snapshot de stats + gear equipado dos 6 dolls pra consumo via API/curl. Tentativa inicial com `better-sqlite3` falhou no Windows (requer Python + node-gyp + build tools nativas que não estão presentes). Node 22+ ganhou módulo SQLite **built-in** (`node:sqlite`) que usa libsqlite embedada — sem deps nativas, sem postinstall script. DEC-10 antecipou SQLite como "decisão futura quando fase 2 do leilão entrar"; aqui é a primeira instância concreta.
+**Decisão:** Adotar `node:sqlite` (Node 22+; user roda Node 24). Schema mínimo em `src/db.js`:
+- `characters (doll PK, role, name, level, hp_value, hp_max, hp_percent, armor, damage, stats_json, updated_at)`
+- `equipped_items (doll, slot, ..., PK (doll, slot))` — UNIQUE composite, upsert via ON CONFLICT
+- **Sem histórico** — upsert overrides o estado anterior. Se virar requisito, tabela `*_history` separada.
+
+DB file em `data/state.db` (gitignored, junto com `state.db-wal`/`-shm`/`-journal`). WAL mode habilitado. API: `getDb()`, `persistCharacters(chars)`, `readAllCharacters()`.
+**Alternativas rejeitadas:**
+- *better-sqlite3*: build nativa via node-gyp; bloqueado pelo ambiente do user (Windows sem Python). Reintroduzir só vale se `node:sqlite` virar problema.
+- *JSON file (igual `affixes.json`)*: catálogos JSON são versionados (DEC-10) e estáticos. Estado dos chars é dinâmico, dado real-time — JSON daria conflitos de write e seria lento pra buscas.
+- *Persistir no `botState.js` (in-memory)*: não sobrevive reboot do bot. User pediu explicitamente "registrado no sqlite".
+**Consequências:**
+- `node:sqlite` é "experimental" em Node 24 (warning amarelo no startup). API estável, mas pode mudar — porte pra better-sqlite3 é trivial se necessário (mesma API de prepare/run, mas com `db.transaction(fn)` em vez de BEGIN/COMMIT manual).
+- Endpoints `/api/characters[/attributes|/items]` aceitam `?from=db` pra ler estado salvo sem refetch — útil pra Claude consumir via curl sem bater no servidor do jogo.
+- Bot continua single-package; SQLite mora em `src/db.js` + 1 file binário em `data/`.
+
+---
+
 ### [DEC-04] Documentação espelhando o sistema do webservices-core
 
 **Data:** 2026-04-28

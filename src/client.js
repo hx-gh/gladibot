@@ -30,13 +30,16 @@ export class GladiatusClient {
 
   async _exec(method, url, options, attempt = 0) {
     const fn = method === 'POST' ? 'post' : 'get';
+    // noXhr=true: emit a "real" navigation request (omit x-requested-with).
+    // Used for endpoints that branch on AJAX vs navigation server-side, e.g.
+    // mod=overview&doll=N which only switches the active doll on real GETs.
+    const baseHeaders = options.noXhr
+      ? { 'x-csrf-token': this.session.csrf }
+      : { 'x-csrf-token': this.session.csrf, 'x-requested-with': 'XMLHttpRequest' };
+    const { noXhr: _ignore, ...passOptions } = options;
     const finalOpts = {
-      ...options,
-      headers: {
-        'x-csrf-token': this.session.csrf,
-        'x-requested-with': 'XMLHttpRequest',
-        ...(options.headers || {}),
-      },
+      ...passOptions,
+      headers: { ...baseHeaders, ...(passOptions.headers || {}) },
     };
     log.debug('HTTP', method, url);
     const res = await this.page.request[fn](url, finalOpts);
@@ -91,9 +94,10 @@ export class GladiatusClient {
   // / inspection so you don't race with the orchestrator's `getHtml` (which
   // would cause both navigations to abort each other). JS won't run, so any
   // client-side rendering is missing, but server-rendered markup is intact.
-  async fetchRawHtml(path, params) {
+  async fetchRawHtml(path, params, opts = {}) {
     return this._exec('GET', this.buildUrl(path, params), {
       headers: { accept: 'text/html, */*' },
+      noXhr: opts.noXhr === true,
     });
   }
 

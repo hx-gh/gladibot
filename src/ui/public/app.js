@@ -57,6 +57,12 @@ const els = {
   combinedRows: document.getElementById('combinedRows'),
   trainingPoints: document.getElementById('trainingPoints'),
   btnRefreshTraining: document.getElementById('btnRefreshTraining'),
+  // characters tab (mercs)
+  charTabs: document.querySelectorAll('.char-tab'),
+  tabPanes: document.querySelectorAll('.char-card .tab-pane'),
+  tabInfos: document.querySelectorAll('.char-tab-info'),
+  mercsGrid: document.getElementById('mercsGrid'),
+  btnRefreshChars: document.getElementById('btnRefreshChars'),
   // auction
   auctionTabs: document.getElementById('auctionTabs'),
   auctionRows: document.getElementById('auctionRows'),
@@ -696,6 +702,79 @@ els.btnEnable.addEventListener('click', () =>
   fetchJson('/api/actions/enable', { method: 'POST' }).then(poll)
 );
 els.btnRefreshTraining.addEventListener('click', refreshTraining);
+
+// ─── Tabs Atributos / Mercenários (card Personagem) ───
+function showCharTab(tab) {
+  els.charTabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
+  els.tabPanes.forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+  els.tabInfos.forEach((el) => { el.hidden = el.dataset.showTab !== tab; });
+}
+els.charTabs.forEach((t) => t.addEventListener('click', () => showCharTab(t.dataset.tab)));
+
+const SLOT_ORDER = ['helmet', 'weapon', 'offhand', 'armor', 'pants', 'boots', 'amulet', 'ring1', 'ring2'];
+const QUALITY_COLORS = { 0: '#7CFC00', 1: '#5159F7', 2: '#9B30FF' };
+
+function fmtItem(it) {
+  if (!it || it.empty) return `<span class="merc-slot-empty">vazio</span>`;
+  const color = QUALITY_COLORS[it.quality] || '#DDD';
+  const name = escapeHtml(it.name || '?');
+  const lvl = it.level ? ` <span class="muted">lvl ${it.level}</span>` : '';
+  return `<span style="color:${color}">${name}</span>${lvl}`;
+}
+
+function renderMercs(chars) {
+  if (!chars || chars.length === 0) {
+    els.mercsGrid.innerHTML = '<div class="muted" style="text-align:center;padding:14px">sem dados</div>';
+    return;
+  }
+  els.mercsGrid.innerHTML = chars.map((c) => {
+    const hpPct = c.hp && c.hp.max ? (c.hp.value / c.hp.max) * 100 : (c.hpPercent ?? 0);
+    const hpText = c.hp ? `${fmtNum(c.hp.value)} / ${fmtNum(c.hp.max)}` : `${c.hpPercent ?? '?'}%`;
+    const statsHtml = STAT_KEYS.map((k) => {
+      const s = c.stats?.[k];
+      if (!s) return '';
+      return `<div class="merc-stat"><span class="merc-stat-lbl">${STAT_LABELS[k].slice(0, 3)}</span><span class="merc-stat-val">${s.total ?? '?'}</span></div>`;
+    }).join('');
+    const equippedByslot = {};
+    for (const it of c.equipped || []) equippedByslot[it.slot] = it;
+    const eqHtml = SLOT_ORDER.map((slot) => {
+      const it = equippedByslot[slot];
+      const lbl = it?.label || slot;
+      return `<div class="merc-slot-row"><span class="merc-slot-lbl">${escapeHtml(lbl)}</span><span class="merc-slot-val">${fmtItem(it)}</span></div>`;
+    }).join('');
+    return `
+      <div class="merc-card">
+        <div class="merc-card-head">
+          <div class="merc-doll">d${c.doll}</div>
+          <div class="merc-meta">
+            <div class="merc-name">${escapeHtml(c.name || '?')}</div>
+            <div class="merc-role muted">${escapeHtml(c.role || '?')} · lvl ${c.level ?? '?'}</div>
+          </div>
+          <div class="merc-armor muted" title="Armadura · Dano">${fmtNum(c.armor || 0)} ⛨ · ${escapeHtml(c.damage || '—')}</div>
+        </div>
+        <div class="merc-hp">
+          <div class="merc-hp-track"><div class="bar-fill bar-hp" style="width:${hpPct.toFixed(1)}%"></div></div>
+          <span class="merc-hp-text">${hpText}</span>
+        </div>
+        <div class="merc-stats">${statsHtml}</div>
+        <div class="merc-slots">${eqHtml}</div>
+      </div>`;
+  }).join('');
+}
+
+async function refreshChars() {
+  els.btnRefreshChars.disabled = true;
+  els.mercsGrid.innerHTML = '<div class="muted" style="text-align:center;padding:14px">carregando…</div>';
+  try {
+    const data = await fetchJson('/api/characters');
+    renderMercs(data.characters);
+  } catch (e) {
+    els.mercsGrid.innerHTML = `<div class="muted" style="text-align:center;padding:14px">falha: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    setTimeout(() => (els.btnRefreshChars.disabled = false), 500);
+  }
+}
+els.btnRefreshChars.addEventListener('click', refreshChars);
 els.logLevel.addEventListener('change', () => {
   els.logBox.innerHTML = '';
   lastLogTs = 0;

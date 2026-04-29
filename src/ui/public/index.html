@@ -78,13 +78,19 @@
           <div class="res-item"><span class="res-label">XP</span><span class="res-value" id="statXp">—</span></div>
         </div>
 
-        <div class="char-section-head">
-          <span class="section-title">Atributos &amp; Treinamento</span>
-          <span class="muted" id="trainingPoints">— pts</span>
-          <button id="btnRefreshTraining" class="btn btn-icon" title="Atualizar custos">⟳</button>
+        <div class="char-section-head char-tabs">
+          <button class="char-tab active" data-tab="main">Atributos</button>
+          <button class="char-tab" data-tab="mercs">Mercenários</button>
+          <span class="char-tab-spacer"></span>
+          <span class="muted char-tab-info" data-show-tab="main" id="trainingPoints">— pts</span>
+          <button id="btnRefreshTraining" class="btn btn-icon char-tab-info" data-show-tab="main" title="Atualizar custos">⟳</button>
+          <button id="btnRefreshChars" class="btn btn-icon char-tab-info" data-show-tab="mercs" title="Atualizar mercenários" hidden>⟳</button>
         </div>
-        <div id="combinedRows" class="combined-rows">
+        <div id="combinedRows" class="combined-rows tab-pane" data-pane="main">
           <div class="muted" style="text-align:center;padding:10px">Carregando…</div>
+        </div>
+        <div id="mercsGrid" class="mercs-grid tab-pane" data-pane="mercs" hidden>
+          <div class="muted" style="text-align:center;padding:14px">Clique em ⟳ pra carregar.</div>
         </div>
       </section>
 

@@ -15,6 +15,8 @@ import {
 } from '../botState.js';
 import { fetchTrainingStatus, trainSkill } from '../actions/training.js';
 import { fetchAuctionList } from '../actions/auction.js';
+import { fetchAllCharacters } from '../actions/characters.js';
+import { persistCharacters, readAllCharacters } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -138,6 +140,58 @@ export function startUiServer() {
     }
   });
 
+  // Characters (principal + espelho + 4 mercs). Lazy fetch — varre doll=1..6
+  // em paralelo, persiste no SQLite, retorna JSON. ?from=db lê estado salvo
+  // sem re-fetch (pra Claude consumir via curl sem onerar o servidor do jogo).
+  async function loadCharacters(req) {
+    if (req.query.from === 'db') return readAllCharacters();
+    const client = getClient();
+    if (!client) throw new Error('client not ready');
+    const all = await fetchAllCharacters(client);
+    persistCharacters(all);
+    return all;
+  }
+
+  app.get('/api/characters', async (req, res) => {
+    try {
+      res.json({ characters: await loadCharacters(req) });
+    } catch (e) {
+      log.warn(`UI /api/characters failed: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/characters/attributes', async (req, res) => {
+    try {
+      const all = await loadCharacters(req);
+      res.json({
+        characters: all.map((c) => ({
+          doll: c.doll, role: c.role, name: c.name, level: c.level,
+          hp: c.hp, hpPercent: c.hpPercent, armor: c.armor, damage: c.damage,
+          stats: c.stats,
+        })),
+      });
+    } catch (e) {
+      log.warn(`UI /api/characters/attributes failed: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/characters/items', async (req, res) => {
+    try {
+      const all = await loadCharacters(req);
+      res.json({
+        characters: all.map((c) => ({
+          doll: c.doll, role: c.role, name: c.name, level: c.level,
+          equipped: c.equipped,
+        })),
+      });
+    } catch (e) {
+      log.warn(`UI /api/characters/items failed: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Debug: GET arbitrary game route via the active client. Only listens on
   // 127.0.0.1, but still gated to common safe params. Returns text/html so it
   // renders raw in the browser (View Source). Useful to capture HTML when the
@@ -149,10 +203,12 @@ export function startUiServer() {
     for (const k of ['mod', 'submod', 'loc', 'sub']) {
       if (typeof req.query[k] === 'string') params[k] = req.query[k];
     }
-    if (!params.mod) return res.status(400).type('text').send('usage: /api/debug/html?mod=overview[&submod=][&loc=]');
+    if (!params.mod) return res.status(400).type('text').send('usage: /api/debug/html?mod=overview[&submod=][&loc=][&doll=N][&raw=1]');
+    if (typeof req.query.doll === 'string') params.doll = req.query.doll;
+    const noXhr = req.query.raw === '1' || req.query.raw === 'true';
     try {
-      log.debug(`UI debug GET ${JSON.stringify(params)}`);
-      const html = await client.fetchRawHtml('/game/index.php', params);
+      log.debug(`UI debug GET ${JSON.stringify(params)} noXhr=${noXhr}`);
+      const html = await client.fetchRawHtml('/game/index.php', params, { noXhr });
       res.type('text/plain; charset=utf-8').send(html);
     } catch (e) {
       res.status(500).type('text').send(`fetch failed: ${e.message}`);

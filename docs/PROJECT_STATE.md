@@ -1,6 +1,6 @@
 ---
 date: 2026-04-28
-updated: 2026-04-28
+updated: 2026-04-29
 ---
 
 # Gladibot — Project State
@@ -24,11 +24,14 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `src/actions/heal.js` | ✅ Pronto | Greedy "não extrapolar" |
 | `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
 | `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai |
-| `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`) |
-| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal → exp → masm → work fallback; chama `setSnapshot` a cada parse |
+| `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`); aceita `opts={force,jobType,hours}` pra fallback AFK |
+| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → AFK fallback (lowHp+noFood→work 8h) → exp → masm → work fallback (pontos zerados) → heal post; chama `setSnapshot` a cada parse |
 | `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
 | `src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
 | `src/actions/auction.js` (read-only) | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})`. `placeBid` gated, não plugado em runtime |
+| `src/actions/characters.js` | ✅ Pronto | `fetchCharacter(client, doll)` + `fetchAllCharacters(client)`. Varre doll=1..6 em paralelo. Usa `noXhr: true` (DEC-17) |
+| `src/db.js` (SQLite via node:sqlite) | ✅ Pronto | DEC-18. Schema characters + equipped_items, upsert sem histórico. WAL mode. data/state.db gitignored |
+| `src/state.js` parsers de char (paperdoll) | ✅ Pronto | `parseEquipped`, `parseDollTabs`, `parseCharSnapshot`. 9 slots equipados (helm/weapon/offhand/armor/ring1/ring2/pants/boots/amulet) |
 | `src/state.js` parsers de leilão | ✅ Pronto | `parseAuctionList(html)` + tooltip duplo (item + equipado) |
 | `data/affixes.json` (catálogo) | ✅ Pronto | 228 prefixos + 317 sufixos; 87 com `top:true`; effects[] estruturados |
 | `data/formulas.json` (catálogo) | ✅ Pronto | 38 fórmulas (combat/defense/critical/healing/regen/items/etc) com `expression` em JS |
@@ -60,6 +63,8 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Catálogo de prefixos/sufixos (`data/affixes.json`): 228 + 317 entries, top flag, scrape via curl + Playwright render | 2026-04-28 |
 | Catálogo de fórmulas (`data/formulas.json`): 38 entries com expression JS-evaluable | 2026-04-28 |
 | Resiliência: tick errors não derrubam loop (warn + retry 30s) | 2026-04-28 |
+| AFK fallback no orchestrator: HP baixo + sem comida → Rapaz do Estábulo 8h (DEC-16) | 2026-04-29 |
+| Painel 4 Personagens — Tab Mercenários no card Char: parser de paperdoll (9 slots) + actions/characters.js + SQLite + endpoints `/api/characters[/attributes\|/items]` + UI grid de 6 cards (DEC-17, DEC-18) | 2026-04-29 |
 
 ### Em andamento
 

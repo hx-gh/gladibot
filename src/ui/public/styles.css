@@ -580,11 +580,91 @@ body {
   gap: 8px;
   overflow: hidden;
 }
-.char-card > .combined-rows {
+.char-card > .combined-rows,
+.char-card > .mercs-grid {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
+.char-card > .tab-pane[hidden] { display: none; }
+.char-tabs .char-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.char-tabs .char-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent, #5159F7);
+}
+.char-tab-spacer { flex: 1; }
+.char-tab-info[hidden] { display: none; }
+
+/* Mercenários grid */
+.mercs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  padding: 6px 2px;
+}
+.merc-card {
+  background: var(--card-alt, rgba(255,255,255,0.02));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.merc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.merc-doll {
+  background: var(--accent, #5159F7);
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.merc-meta { flex: 1; min-width: 0; }
+.merc-name { font-weight: 600; font-size: 13px; }
+.merc-role { font-size: 11px; }
+.merc-armor { font-size: 10px; text-align: right; }
+.merc-hp { display: flex; align-items: center; gap: 6px; }
+.merc-hp-track {
+  flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.merc-hp-text { font-size: 11px; color: var(--text-dim); }
+.merc-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  font-size: 11px;
+}
+.merc-stat {
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--border); border-radius: 3px; padding: 2px;
+}
+.merc-stat-lbl { color: var(--text-dim); font-size: 9px; text-transform: uppercase; }
+.merc-stat-val { font-weight: 600; }
+.merc-slots {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 11px; line-height: 1.3;
+  border-top: 1px solid var(--border); padding-top: 4px;
+}
+.merc-slot-row { display: flex; gap: 6px; }
+.merc-slot-lbl { color: var(--text-dim); flex: 0 0 90px; }
+.merc-slot-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merc-slot-empty { color: var(--text-dim); font-style: italic; }
 .char-section-head {
   display: flex;
   align-items: center;

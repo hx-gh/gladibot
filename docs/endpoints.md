@@ -25,6 +25,53 @@ HTML completo da página. Parser extrai do response:
 - Ouro / rubis / level / exp%
 - Inventário (`#inv > div[data-content-type=64]` para comida)
 
+## Trocar de doll (overview com doll=N)
+
+```
+GET /game/index.php?mod=overview&doll=<N>&sh=<sh>
+```
+
+`N=1` é o gladiador principal, `N=2` é o "espelho" (mesmo char, gear separado pra outro tipo de batalha), `N=3..6` são os 4 mercenários do squad. Total: **6 dolls**.
+
+**CRÍTICO:** o servidor PHP do Gladiatus só honra `doll=N` quando vê uma **navegação "real"** — ou seja, **sem** o header `x-requested-with: XMLHttpRequest`. Com o header XHR (default do `client._exec`), a página retorna sempre o doll=1, ignorando o param.
+
+Solução: `client.fetchRawHtml(path, params, { noXhr: true })` omite o header XHR só pra essa request. Não afeta os outros endpoints AJAX.
+
+A sidebar lateral do overview lista os 6 dolls (`<div class="charmercsel">`). O parser `parseDollTabs(html)` extrai role+active de cada um.
+
+### Stats por doll (dentro do HTML)
+
+O **header global** (`#header_values_level`, `#header_values_hp_bar`, `.playername`) continua refletindo o **principal** mesmo em `?doll=N`. Para stats do doll selecionado, usar:
+
+| Anchor | Conteúdo |
+|---|---|
+| `#char_level` | nível do char ativo |
+| `#char_leben` | HP em % (ex: "100 %") |
+| `#char_leben_tt[data-tooltip]` | linha `["Pontos de vida:", "X / Y"]` com HP absoluto |
+| `#char_f0..f5` | atributos (Força, Destreza, …) — texto direto + tooltip detalhado |
+| `#char_panzer` | armadura |
+| `#char_schaden` | dano |
+
+`parseCharSnapshot(html)` em `src/state.js` consolida todos esses anchors + `parseEquipped()` + `parseDollTabs()` num objeto único.
+
+### Slots equipados (paperdoll)
+
+Cada slot é um `<div data-container-number="N" data-content-type="X" data-tooltip="..." data-item-id="...">`. Container `8` é a área droppable do avatar (heal target), **não** slot de equipment.
+
+| container | content-type | slot |
+|---|---|---|
+| 2 | 1 | Capacete (helmet) |
+| 3 | 2 | Arma principal (weapon) |
+| 4 | 4 | Arma secundária / Escudo (offhand) |
+| 5 | 8 | Armadura (armor) |
+| 6 | 48 | Anel 1 (ring1) |
+| 7 | 48 | Anel 2 (ring2) |
+| 9 | 256 | Calças (pants) |
+| 10 | 512 | Sapatos (boots) |
+| 11 | 1024 | Amuleto (amulet) |
+
+Slots vazios têm o `<div>` mas sem `data-item-id`. `parseEquipped` distingue.
+
 ## Atacar expedição
 
 ```

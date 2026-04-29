@@ -557,6 +557,158 @@ export function parseAuctionList(html) {
   return result;
 }
 
+// Lê HP absoluto do tooltip de #char_leben_tt: linha [["Pontos de vida:", "X / Y"], [...]].
+function parseHpFromLebenTooltip(html) {
+  const m = html.match(/id="char_leben_tt"[^>]*data-tooltip="([^"]+)"/);
+  if (!m) return null;
+  try {
+    const json = JSON.parse(decodeAttr(m[1]));
+    let rows = json;
+    while (Array.isArray(rows) && rows.length === 1 && Array.isArray(rows[0])) {
+      if (Array.isArray(rows[0][0])) { rows = rows[0]; break; }
+      rows = rows[0];
+    }
+    if (!Array.isArray(rows)) return null;
+    for (const row of rows) {
+      if (!Array.isArray(row) || !Array.isArray(row[0])) continue;
+      const label = row[0][0];
+      if (typeof label === 'string' && /Pontos de vida/i.test(label)) {
+        const v = String(row[0][1] || '');
+        const mm = v.match(/([\d.]+)\s*\/\s*([\d.]+)/);
+        if (mm) return { value: parseInt(mm[1].replace(/\./g, ''), 10), max: parseInt(mm[2].replace(/\./g, ''), 10) };
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// Snapshot por-doll da página overview. Usa anchors do char ativo (#char_*),
+// NÃO os do header global (#header_values_*) que continuam no principal.
+// Inclui equipped[] e dollTabs[] pra a UI.
+export function parseCharSnapshot(html) {
+  const name = rxOne(html, /<div class="playername[^"]*">\s*([^<]+?)\s*<\/div>/);
+  const level = toInt(rxOne(html, /id="char_level"[^>]*>(\d+)</));
+  const hpPercent = toInt(rxOne(html, /id="char_leben"[^>]*>(\d+)\s*%/));
+  const hp = parseHpFromLebenTooltip(html);
+  const armor = toInt(rxOne(html, /id="char_panzer"[^>]*>([\d.]+)</));
+  const damage = rxOne(html, /id="char_schaden"[^>]*>([^<]+)</);
+  const stats = parseStatsBlock(html);
+  const equipped = parseEquipped(html);
+  const dollTabs = parseDollTabs(html);
+  const activeTab = dollTabs.find((t) => t.active) || null;
+  return {
+    doll: activeTab ? activeTab.doll : null,
+    role: activeTab ? activeTab.role : null,
+    name,
+    level,
+    hpPercent,
+    hp,
+    armor,
+    damage: damage ? damage.trim() : null,
+    stats,
+    equipped,
+    dollTabs,
+  };
+}
+
+// Slots equipados no paperdoll (mod=overview). container=8 é a área droppable
+// do avatar (heal target), não slot de equipment, então é omitida.
+export const EQUIPPED_SLOTS = [
+  { container: 2, contentType: 1, slot: 'helmet', label: 'Capacete' },
+  { container: 3, contentType: 2, slot: 'weapon', label: 'Arma principal' },
+  { container: 4, contentType: 4, slot: 'offhand', label: 'Arma secundária' },
+  { container: 5, contentType: 8, slot: 'armor', label: 'Armadura' },
+  { container: 6, contentType: 48, slot: 'ring1', label: 'Anel 1' },
+  { container: 7, contentType: 48, slot: 'ring2', label: 'Anel 2' },
+  { container: 9, contentType: 256, slot: 'pants', label: 'Calças' },
+  { container: 10, contentType: 512, slot: 'boots', label: 'Sapatos' },
+  { container: 11, contentType: 1024, slot: 'amulet', label: 'Amuleto' },
+];
+
+// Cada slot é um <div data-container-number=N data-content-type=X data-tooltip=... data-item-id=...>.
+// Slots ocupados têm data-item-id; slots vazios têm o div mas sem item. O paperdoll também
+// renderiza um div "background" por slot sem data-item-id — distinguimos pelo presence dele.
+export function parseEquipped(html) {
+  const out = [];
+  for (const def of EQUIPPED_SLOTS) {
+    const re = new RegExp(
+      `<div\\b[^>]*\\bdata-container-number=["']${def.container}["'][^>]*>`,
+      'g'
+    );
+    let chosen = null;
+    for (const m of html.matchAll(re)) {
+      if (/data-item-id="\d+"/.test(m[0])) { chosen = m[0]; break; }
+    }
+    if (!chosen) {
+      out.push({ ...def, empty: true, itemId: null, name: null, level: null });
+      continue;
+    }
+    const get = (name) => {
+      const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
+      const mm = chosen.match(r);
+      return mm ? mm[1] : null;
+    };
+    const tooltipRaw = get('data-tooltip');
+    let tooltip = null;
+    if (tooltipRaw) {
+      try {
+        const json = JSON.parse(decodeAttr(tooltipRaw));
+        // Equipped tooltip é [[itemRows]] (1 bloco) — leilão usa [item, equipped] (2).
+        if (Array.isArray(json) && Array.isArray(json[0])) {
+          tooltip = parseAuctionTooltipBlock(json[0]);
+        }
+      } catch { /* ignore */ }
+    }
+    const lvl = parseInt(get('data-level') || '', 10);
+    const qty = get('data-quality');
+    const price = parseInt(get('data-price-gold') || '', 10);
+    out.push({
+      ...def,
+      empty: false,
+      itemId: get('data-item-id'),
+      basis: get('data-basis'),
+      hash: get('data-hash'),
+      level: Number.isFinite(lvl) ? lvl : null,
+      quality: qty !== null && qty !== '' ? parseInt(qty, 10) : null,
+      priceGold: Number.isFinite(price) ? price : null,
+      name: tooltip?.name ?? null,
+      stats: tooltip?.stats ?? [],
+      durability: tooltip?.durability ?? null,
+      conditioning: tooltip?.conditioning ?? null,
+      soulbound: tooltip?.soulbound ?? null,
+    });
+  }
+  return out;
+}
+
+// Sidebar lateral do overview (charmercsel) lista os 6 dolls disponíveis com
+// role tooltip (ex: "Batalha Básica", "Mestre Druida"). Útil pra descobrir
+// quais dolls existem antes de fazer GET pra cada um.
+export function parseDollTabs(html) {
+  const tabs = [];
+  const re = /class="charmercsel(\s+active)?"[^>]*onClick="selectDoll\('[^']*doll=(\d+)[^']*'\)"[\s\S]{0,400}?charmercpic\s+doll\d+[\s\S]{0,400}?data-tooltip="([^"]+)"/g;
+  for (const m of html.matchAll(re)) {
+    const active = !!m[1];
+    const doll = parseInt(m[2], 10);
+    let role = null;
+    try {
+      const decoded = m[3]
+        .replace(/&quot;/g, '"').replace(/&#039;/g, "'")
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const json = JSON.parse(decoded);
+      let row = json;
+      while (Array.isArray(row) && row.length === 1 && Array.isArray(row[0])) row = row[0];
+      if (Array.isArray(row) && typeof row[0] === 'string') {
+        // Tooltip vem como "Mestre Druida<br /><font ...>Missão: ...</font>".
+        // Pegamos a primeira linha (antes do <br>) e strip de tags residuais.
+        role = row[0].split(/<br\b/i)[0].replace(/<[^>]*>/g, '').trim();
+      }
+    } catch { /* ignore */ }
+    tabs.push({ doll, role, active });
+  }
+  return tabs;
+}
+
 // Parser do HTML de mod=work. Detecta trabalho ativo via o ticker de countdown
 // que só existe quando há trabalho em andamento.
 //

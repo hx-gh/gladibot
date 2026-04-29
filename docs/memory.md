@@ -19,6 +19,7 @@ Esses valores são re-deriváveis pelo response JSON de qualquer ação (heal, f
 ## Conceitos importantes do jogo
 
 - **Pontos de expedição e de masmorra são independentes** (dois contadores `X/Y`, máx 24 cada).
+- **Pontos NÃO regeneram com o tempo.** Só HP regenera (3.294/h no snapshot atual). Pontos só voltam consumindo via combate ou via reset manual (não automatizamos). Consequência: se o bot fica travado por HP baixo + sem comida, "dormir o tick" não resolve nada — pontos continuariam parados. Essa é a razão de DEC-16 (AFK fallback manda pra trabalho mesmo com pontos sobrando).
 - **Cooldowns também são independentes por slot.** O slot de expedição tem seu próprio timer; o de masmorra idem. Atacar um não bloqueia o outro.
 - **Trabalho** trava todos os outros slots (não dá pra atacar enquanto trabalha).
 - **Session hash (`sh`)** e **CSRF token** rotacionam por sessão. Cookies + CSRF são todos derivados de login Google manual — bot não trata login.
@@ -32,6 +33,7 @@ Esses valores são re-deriváveis pelo response JSON de qualquer ação (heal, f
 | Cooldown masmorra livre + pontos > 0 | Ataca próximo monstro disponível na masmorra Porto Perdido (`loc=3`) |
 | Pontos masmorra acabaram E masmorra finalizada (boss morto) | Inicia nova masmorra Normal |
 | Ambos pontos = 0 | **Rapaz do Estábulo** por 8h (1.000 ouro/h, melhor entre os jobs sem custo de rubis) |
+| HP < 20% AND inventário sem comida (mesmo com pontos) | **Rapaz do Estábulo 8h forçado** (DEC-16). Pontos não regeneram — não dá pra esperar reset; ir trabalhar queima tempo até HP voltar |
 
 ## Decisões deliberadas
 

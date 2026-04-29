@@ -62,6 +62,18 @@ export async function tick(client) {
   //    ficou crítico no fim do tick anterior, esperando dormir o cooldown).
   state = await maybeHeal(client, state, 'pre');
 
+  // 1b. AFK fallback — HP baixo e inventário sem comida: não dá pra batalhar
+  //     e pontos NÃO regeneram com o tempo, só HP. Mandamos pra Rapaz do
+  //     estábulo (8h) pra queimar tempo até o HP voltar. Bypass do gate de
+  //     pontos via { force: true }.
+  const noFood = (state.inventoryFood?.length ?? 0) === 0;
+  const lowHp = (state.hpPercent ?? 100) < config.heal.thresholdPct;
+  if (lowHp && noFood) {
+    log.warn(`AFK fallback: HP ${state.hpPercent}% sem comida — Rapaz do estábulo 8h`);
+    await startWork(client, state, { force: true, jobType: 2, hours: 8 });
+    return Math.ceil(config.loop.tickMinMs / 1000);
+  }
+
   // 2. Expedition (if free)
   const exp = await attackExpedition(client, state);
   if (exp.acted) {
