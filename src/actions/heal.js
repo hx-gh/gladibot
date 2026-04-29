@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { log } from '../log.js';
+import { isActionsEnabled } from '../botState.js';
 
 // Greedy "no overflow": pick the largest food item where heal_nominal <= missing.
 // Fallback: smallest item if everything overflows.
@@ -20,6 +21,9 @@ export function pickHealItem(state) {
 }
 
 export async function healIfNeeded(client, state) {
+  if (!isActionsEnabled()) {
+    return { acted: false, reason: 'actions disabled' };
+  }
   const pct = state.hpPercent ?? 100;
   if (pct >= config.heal.thresholdPct) {
     return { acted: false, reason: `HP ${pct}% >= threshold ${config.heal.thresholdPct}%` };

@@ -1,4 +1,5 @@
 import { log } from '../log.js';
+import { isActionsEnabled } from '../botState.js';
 
 // Parse dungeon page HTML for available fights: <img onclick="startFight(posi, did)">
 // Returns the smallest-posi fight (deterministic; user can override via strategy later).
@@ -36,6 +37,9 @@ export async function fetchDungeonState(client, locId = 3) {
 }
 
 export async function attackDungeon(client, state, locId = 3) {
+  if (!isActionsEnabled()) {
+    return { acted: false, reason: 'actions disabled' };
+  }
   if ((state.dungeon.cooldownSec ?? 0) > 0) {
     return { acted: false, reason: `dungeon on cooldown ${state.dungeon.cooldownSec}s` };
   }

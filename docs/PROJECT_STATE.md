@@ -25,7 +25,15 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
 | `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai |
 | `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`) |
-| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal → exp → masm → work fallback |
+| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal → exp → masm → work fallback; chama `setSnapshot` a cada parse |
+| `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
+| `src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
+| `src/actions/auction.js` (read-only) | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})`. `placeBid` gated, não plugado em runtime |
+| `src/state.js` parsers de leilão | ✅ Pronto | `parseAuctionList(html)` + tooltip duplo (item + equipado) |
+| `data/affixes.json` (catálogo) | ✅ Pronto | 228 prefixos + 317 sufixos; 87 com `top:true`; effects[] estruturados |
+| `data/formulas.json` (catálogo) | ✅ Pronto | 38 fórmulas (combat/defense/critical/healing/regen/items/etc) com `expression` em JS |
+| Resiliência tick errors | ✅ Pronto | Erro dentro de tick → log.warn + retry em 30s; SessionExpiredError e bootstrap continuam fatais |
+| `src/log.js` (sink ring + arquivo) | ✅ Pronto | Console + ring buffer + `logs/session.log` truncado por sessão |
 | `gladibot-bridge.user.js` (Tampermonkey) | ✅ Pronto | Para mapeamento via MCP, não runtime |
 
 ## Features
@@ -43,6 +51,15 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `actions/work.js` real (DEBT-01 fechado) | 2026-04-28 |
 | `actions/dungeon.js` auto-restart (DEBT-02 fechado) | 2026-04-28 |
 | Heal pré + pós-luta no orchestrator | 2026-04-28 |
+| UI vanilla local (Express + HTML/CSS/JS, polling 2s) — DEBT-04 fechado | 2026-04-28 |
+| Kill switch de actions (env + CLI `--no-actions` + UI toggle) | 2026-04-28 |
+| Detecção de "trabalhando" via `mod=work` + gating no orchestrator (banner na UI) | 2026-04-28 |
+| UI rica: hero card (avatar+nome+lvl+HP), stats dos 6 atributos, banner de buffs (globais + pessoais), card de Treinamento com botões (gated por kill switch + ouro), redesign de layout mais denso | 2026-04-28 |
+| Painel 2 Leilão — Fase 1 (read-only): parser, action, endpoint API, UI com tabs/filtros/lista | 2026-04-28 |
+| Painel 2 Leilão — Fase 1.5 (comparação rica + recomendação): `src/itemCompare.js`, parsing dual-format, consolidação flat+%, `RECOMENDADO` por gap | 2026-04-29 |
+| Catálogo de prefixos/sufixos (`data/affixes.json`): 228 + 317 entries, top flag, scrape via curl + Playwright render | 2026-04-28 |
+| Catálogo de fórmulas (`data/formulas.json`): 38 entries com expression JS-evaluable | 2026-04-28 |
+| Resiliência: tick errors não derrubam loop (warn + retry 30s) | 2026-04-28 |
 
 ### Em andamento
 
@@ -53,7 +70,12 @@ _(nenhuma)_
 | Feature | Bloqueio |
 |---|---|
 | Refresh de sessão automático | Não-MVP. Ver DEBT-03 |
-| Dashboard de monitoramento | Backlog. Ver DEBT-04 |
+| **Painel 2 Leilão Fase 2:** catálogo SQLite + sniper de subvalorizados + UI de regras autobuy + executor automático | Depende da Fase 1 (✅) e do uso real do parser |
+| **Painel 3: Forja** (Fornalha + Fundição + Bancada + Horreum) | Mapear endpoints AJAX de cada uma; precisa de cURL via DevTools no jogo real |
+| Tab "Lojas" no Painel 2 (Mercado + estabelecimentos do menu) | Subordinada a evolução do Painel 2 |
+| **Aplicar fórmulas no projeto** (evaluator + valores derivados na UI: DPS estimado, EHP, hit chance, regen real, caps) | Próxima sessão |
+| Recomendador de upgrade (parser de inventário equipado, comparar com tooltip duplo do leilão) | Paralelo |
+| Pendências de captura do leilão | `ttype` semantics; marker "seu lance"; aba Tudo sem filtro — descobrem rodando o bot |
 
 ## Próximas Ações Sugeridas
 

@@ -1,5 +1,14 @@
 import { config } from '../config.js';
 import { log } from '../log.js';
+import { isActionsEnabled } from '../botState.js';
+import { parseWork } from '../state.js';
+
+// HTTP-only GET so we don't navigate the bot's main page (which would race
+// with the orchestrator's overview navigation in subsequent ticks).
+export async function fetchWorkStatus(client) {
+  const html = await client.fetchRawHtml('/game/index.php', { mod: 'work' });
+  return parseWork(html);
+}
 
 // Job IDs (mod=work):
 //   0 Senador (1-24h, premium)   1 Joalheiro (1-4h, premium)
@@ -13,6 +22,9 @@ const JOB_HOUR_LIMITS = {
 };
 
 export async function startWork(client, state) {
+  if (!isActionsEnabled()) {
+    return { acted: false, reason: 'actions disabled' };
+  }
   if ((state.expedition.points ?? 0) > 0 || (state.dungeon.points ?? 0) > 0) {
     return { acted: false, reason: 'still has expedition or dungeon points' };
   }

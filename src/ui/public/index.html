@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gladibot — control panel</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="liveDot"></span>
+      <h1>gladibot</h1>
+      <span class="muted" id="modeLabel">—</span>
+    </div>
+    <div class="topbar-actions">
+      <span class="pill" id="actionsPill">—</span>
+      <button id="btnDisable" class="btn btn-danger">Disable actions</button>
+      <button id="btnEnable" class="btn btn-success" hidden>Enable actions</button>
+      <span class="topbar-sep"></span>
+      <button id="btnTick" class="btn">Tick now</button>
+      <button id="btnPause" class="btn">Pause</button>
+      <button id="btnResume" class="btn" hidden>Resume</button>
+      <span class="topbar-sep"></span>
+      <button id="btnLoopPanel" class="btn">Loop</button>
+      <button id="btnLogsPanel" class="btn">Logs</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <div id="workingBanner" class="banner banner-working" hidden>
+      <span class="banner-icon">⚒</span>
+      <span class="banner-text">Trabalhando: <b id="workingJob">—</b></span>
+      <span class="banner-time" id="workingTime">—</span>
+    </div>
+
+    <div class="panels-row">
+      <section class="card char-card">
+        <header class="card-head">
+          <h2>Personagem</h2>
+          <span class="muted" id="snapAge">—</span>
+        </header>
+
+        <div class="char-header">
+          <div class="hero-avatar" id="heroAvatar">—</div>
+          <div class="char-info">
+            <div class="hero-name" id="heroName">—</div>
+            <div class="hero-meta">
+              <span>Lvl <b id="heroLevel">—</b></span>
+              <span class="muted">·</span>
+              <span id="heroXp">—</span>
+            </div>
+            <div class="hero-hp">
+              <div class="hero-hp-track"><div class="bar-fill bar-hp" id="heroHpFill"></div></div>
+              <span class="hero-hp-text" id="heroHp">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="buffsBanner" class="banner banner-buffs char-buffs" hidden></div>
+
+        <div class="char-resources">
+          <div class="res-item"><span class="res-label">Ouro</span><span class="res-value" id="statGold">—</span></div>
+          <div class="res-item"><span class="res-label">Rubis</span><span class="res-value" id="statRubies">—</span></div>
+          <div class="res-item"><span class="res-label">Comida</span><span class="res-value" id="statFood">—</span></div>
+          <div class="res-item">
+            <span class="res-label">Expedição</span>
+            <span class="res-value" id="statExp">—</span>
+            <div class="track"><div class="bar-fill bar-exp" id="barExp"></div></div>
+            <span class="muted" id="cdExp">—</span>
+          </div>
+          <div class="res-item">
+            <span class="res-label">Masmorra</span>
+            <span class="res-value" id="statDung">—</span>
+            <div class="track"><div class="bar-fill bar-dung" id="barDung"></div></div>
+            <span class="muted" id="cdDung">—</span>
+          </div>
+          <div class="res-item"><span class="res-label">XP</span><span class="res-value" id="statXp">—</span></div>
+        </div>
+
+        <div class="char-section-head">
+          <span class="section-title">Atributos &amp; Treinamento</span>
+          <span class="muted" id="trainingPoints">— pts</span>
+          <button id="btnRefreshTraining" class="btn btn-icon" title="Atualizar custos">⟳</button>
+        </div>
+        <div id="combinedRows" class="combined-rows">
+          <div class="muted" style="text-align:center;padding:10px">Carregando…</div>
+        </div>
+      </section>
+
+      <section class="card auction-card">
+        <header class="card-head">
+          <h2>Leilão</h2>
+          <span class="muted" id="auctionTimeBucket">—</span>
+          <button id="btnRefreshAuction" class="btn btn-icon" title="Atualizar listagem">⟳</button>
+        </header>
+
+        <div class="auction-tabs" id="auctionTabs">
+          <button class="auction-tab active" data-ttype="">Gladiador</button>
+          <button class="auction-tab" data-ttype="3">Mercenário</button>
+        </div>
+
+        <div class="auction-filters">
+          <select id="aucItemType">
+            <option value="0">Tudo</option>
+            <option value="1">Armas</option>
+            <option value="2">Escudos</option>
+            <option value="3">Armadura</option>
+            <option value="4">Capacetes</option>
+            <option value="5">Luvas</option>
+            <option value="6">Anéis</option>
+            <option value="7">Cura</option>
+            <option value="8">Sapatos</option>
+            <option value="9">Amuletos</option>
+            <option value="11">Alças</option>
+            <option value="12">Melhorias</option>
+            <option value="15">Mercenário</option>
+          </select>
+          <select id="aucItemLevel">
+            <option value="36">Lvl 36+</option>
+            <option value="42">Lvl 42+</option>
+            <option value="48">Lvl 48+</option>
+            <option value="54">Lvl 54+</option>
+            <option value="60">Lvl 60+</option>
+          </select>
+          <select id="aucItemQuality">
+            <option value="-1">Padrão+</option>
+            <option value="0">Verde+</option>
+            <option value="1">Azul+</option>
+            <option value="2">Roxo</option>
+          </select>
+          <input id="aucQry" type="text" placeholder="Busca…" />
+        </div>
+        <div class="auction-filters-aux">
+          <label class="auction-toggle">
+            <input id="aucOnlyTop" type="checkbox" />
+            <span>⭐ Só top prefix/suffix</span>
+          </label>
+          <label class="auction-toggle">
+            <input id="aucOnlyUpgrades" type="checkbox" />
+            <span>↑ Só upgrades</span>
+          </label>
+        </div>
+
+        <div id="auctionRows" class="auction-rows">
+          <div class="muted" style="text-align:center;padding:10px">Clique em ⟳ pra carregar</div>
+        </div>
+      </section>
+
+      <section class="card placeholder-card">
+        <header class="card-head"><h2>Painel 3</h2></header>
+        <div class="placeholder-body muted">a definir</div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Drawer com Loop / Logs (oculto por default) -->
+  <aside class="drawer" id="auxDrawer" hidden>
+    <div class="drawer-head">
+      <div class="drawer-tabs">
+        <button class="drawer-tab" data-tab="loop">Loop</button>
+        <button class="drawer-tab" data-tab="logs">Logs</button>
+      </div>
+      <button class="btn btn-icon drawer-close" id="btnCloseDrawer" title="Fechar">×</button>
+    </div>
+    <div class="drawer-body">
+      <section class="drawer-pane" data-pane="loop" hidden>
+        <header class="card-head"><h2>Loop</h2><span class="pill" id="loopPill">—</span></header>
+        <div class="loop-grid">
+          <div><span class="muted">Última tick</span><div id="loopLast">—</div></div>
+          <div><span class="muted">Duração</span><div id="loopDur">—</div></div>
+          <div><span class="muted">Ticks totais</span><div id="loopCount">—</div></div>
+          <div><span class="muted">Próxima em</span><div id="loopNext" class="next-tick">—</div></div>
+        </div>
+      </section>
+      <section class="drawer-pane" data-pane="logs" hidden>
+        <header class="card-head">
+          <h2>Logs</h2>
+          <div class="log-filters">
+            <select id="logLevel">
+              <option value="">all</option>
+              <option value="debug">debug+</option>
+              <option value="info" selected>info+</option>
+              <option value="warn">warn+</option>
+              <option value="error">error</option>
+            </select>
+            <label class="autoscroll"><input type="checkbox" id="autoscroll" checked /> autoscroll</label>
+          </div>
+        </header>
+        <pre id="logBox" class="log-box"></pre>
+      </section>
+    </div>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

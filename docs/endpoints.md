@@ -98,6 +98,64 @@ Resposta JSON com:
 
 **Use sempre `header.health.value` / `header.health.maxValue`** como fonte de verdade do HP, não o tooltip estático do item.
 
+## Status de trabalho ativo (read-only)
+
+```
+GET /game/index.php?mod=work&sh=<sh>
+```
+
+HTML completo. Quando o personagem **está trabalhando**, contém:
+
+- `<body id="workPage">`
+- `<h1>Trabalhar no estábulo</h1>` (ou outro nome do job ativo)
+- Texto âncora: `Ainda não terminou seu trabalho. Quando tiver feito, receberá seu pagamento.`
+- **Ticker de countdown** com tempo restante em **milissegundos**:
+  ```html
+  <span data-ticker-time-left="4207000" data-ticker-type="countdown" data-ticker-ref="1" class="ticker"></span>
+  ```
+
+Quando **não está trabalhando**, a mesma URL renderiza a tela de seleção de jobs (sem o `data-ticker-time-left` em `countdown`).
+
+`parseWork(html)` em `src/state.js` faz a detecção. Orchestrator chama `fetchWorkStatus(client)` (HTTP raw via `client.fetchRawHtml`, sem navegar a aba) no início de cada tick e pula heal/exp/dung quando ativo, dormindo até `secondsLeft + 10s slack`.
+
+**Importante:** `mod=overview` **não tem** indicador de trabalho — pontos continuam regenerando, cooldowns ficam zerados. A consulta ao `mod=work` é a única fonte confiável.
+
+## Treinamento (página + ação)
+
+```
+GET /game/index.php?mod=training&sh=<sh>
+```
+
+HTML completo com 6 blocos (um por atributo: Força, Destreza, Agilidade, Constituição, Carisma, Inteligência). Cada bloco contém:
+
+- `<div id="char_fN_tt" data-tooltip="...">` — JSON com base/items/máximo/total (mesma estrutura do overview)
+- `<div class="training_costs">CUSTO <img...></div>` — custo em ouro pra subir 1 ponto
+- `<a class="training_button" href="...skillToTrain=ID...">` quando ouro suficiente, ou
+- `<img ... button_disabled.jpg" title="Você não tem ouro suficiente!">` quando insuficiente
+
+Mapping de IDs (`skillToTrain`):
+
+| Stat | DOM id | skillToTrain |
+|---|---|---|
+| Força | `char_f0` | 1 |
+| Destreza | `char_f1` | 2 |
+| Agilidade | `char_f2` | 3 |
+| Constituição | `char_f3` | **4** ✓ |
+| Carisma | `char_f4` | 5 |
+| Inteligência | `char_f5` | **6** ✓ |
+
+Pontos confirmados em produção; demais inferidos do padrão sequencial.
+
+`parseTraining(html)` em `src/state.js` extrai `{ skills: [{key, label, trainId, cost, canTrain}], skillPoints, stats }`.
+
+### Treinar atributo
+
+```
+GET /game/index.php?mod=training&submod=train&skillToTrain=<id>&sh=<sh>
+```
+
+Link puro (não AJAX). Servidor aplica o treino + redireciona pra `mod=training`. Bot usa `client.fetchRawHtml` (HTTP, não navega a aba) e re-parseia a resposta pra retornar custos atualizados sem precisar de outro round-trip. Gated por `isActionsEnabled()` no `actions/training.js`.
+
 ## Iniciar trabalho
 
 ```
@@ -150,9 +208,89 @@ dungeonId=<id>
 
 `dungeonId` é dinâmico — vem do `<input type="hidden" name="dungeonId" value="...">` na própria página da masmorra ativa. Não é parte do loop principal (bot não cancela masmorras automaticamente); fica documentado pra ferramentas/scripts ad-hoc se um dia for útil.
 
+## Leilão (auction-house)
+
+> Mapeamento parcial — Fase 1 do Painel 2 (read-only). Análise DOM completa em `docs/wip/auction/leilao1-analysis.md`.
+
+### Listagem (read)
+
+```
+GET /game/index.php?mod=auction&sh=<sh>           # aba "Necessidades do gladiador" (default)
+GET /game/index.php?mod=auction&ttype=3&sh=<sh>   # aba "Necessidades de mercenário"
+```
+
+HTML completo. Listagem é grid de até 5 anúncios por filtro/aba; **sem paginação** (até prova em contrário). Cada anúncio é um `<form id="auctionForm<auctionid>">` independente.
+
+**Particularidades do leilão Gladiatus (vs PvP típico):**
+
+- É **vs NPC** (jogo gera os itens), não player-to-player. Sem campo `seller`.
+- **Sem countdown per-item** — só indicador global `<span class="description_span_right"><b>Médio</b></span>` (texto categórico: "Curto"/"Médio"/"Longo").
+- O `data-tooltip` do item já contém **comparação com o item atualmente equipado** no doll (array[0]=leiloado, array[1]=equipado), sem precisar de fetch extra.
+
+### Filtros (POST → mesma URL)
+
+`<form action="" method="post" name="filterForm">`. Body params:
+
+| name | tipo | valores | obs |
+|---|---|---|---|
+| `doll` | hidden | `1` (gladiador) / `6+` (mercenário) | comparação |
+| `qry` | text | string | busca por nome |
+| `itemLevel` | select | `36, 42, 48, 54, 60` | "nível mínimo", escalas de 6 |
+| `itemType` | select | `0..15` | categoria — ver mapping |
+| `itemQuality` | select | `-1=padrão, 0=verde, 1=azul, 2=roxo` | rarity mínima |
+| `statFilter[]` | hidden array | `1..6` | stat preferido (Força..Inteligência) |
+
+**`itemType` map**: `0`=Todo, `1`=Armas, `2`=Escudos, `3`=Armadura, `4`=Capacetes, `5`=Luvas, `6`=Anéis, `7`=Cura, `8`=Sapatos, `9`=Amuletos, `11`=Alças, `12`=Melhorias, `15`=Mercenário.
+
+### Lance / compra imediata (POST)
+
+```
+POST /game/index.php?mod=auction&submod=placeBid&ttype=<n>&rubyAmount=60&sh=<sh>
+Content-Type: application/x-www-form-urlencoded
+x-csrf-token: <csrf>
+
+auctionid=<id>
+buyouthd=<0|1>           # 1 = comprar imediato; 0 = lance normal
+bid_amount=<valor>       # apenas quando buyouthd=0
+bid=Proposta             # quando lance
+buyout=Comprar           # quando compra imediata
+qry=<echo>&itemType=<echo>&itemLevel=<echo>&itemQuality=<echo>   # ecoam o filtro atual
+```
+
+`rubyAmount=60` aparece fixo no action — provavelmente preço de boost do server. Cada `<form>` da listagem já vem com hidden inputs montados; basta clonar e setar `bid_amount`/`buyouthd`.
+
+### Schema de cada listing (parsing de DOM)
+
+Por anúncio (1 form):
+
+- **auctionId**: `input[name="auctionid"]` ou regex `/auctionForm(\d+)/` no `form[id]`
+- **item icon**: `div.auction_item_div div.item-i-<itemType>-<subId>`
+- **tooltip JSON**: `[data-tooltip]` — array aninhado `[item, comparacao]`
+- **level**: `[data-level]`
+- **rarity**: `[data-quality]` (1=azul, 2=roxo). **Ausente = verde ou comum** — distinguir pela cor inline `lime` vs branco no nome dentro do tooltip.
+- **price gold (base)**: `[data-price-gold]`
+- **price multiplier**: `[data-price-multiplier]` (provavelmente 3 = buyout = base × 3 em ouro?)
+- **measurement**: `data-measurement-x/y` (slots ocupados)
+- **basis / hash**: `data-basis`, `data-hash` (identificadores opacos)
+- **lance atual / "Não existem licitações"**: 1ª `<div>` em `div.auction_bid_div`
+- **preço inicial**: 2ª `<div>` em `auction_bid_div` (`Preço baixo: X.XXX`)
+- **buyout em ouro / rubis**: números soltos antes de `<img title="Ouro">` e `<img title="Rubis">` na parte de buyout
+
+### Pendências de captura — leilão
+
+- [ ] Confirmar `ttype` semantics (1 vs 2 vs 3)
+- [ ] Marker "seu lance" — capturar página em estado pós-bid
+- [ ] Estrutura/paginação real da aba "Tudo" sem filtro
+- [ ] Validar se filtro `itemType=0` retorna mais que 5 entries
+
+---
+
 ## Pendências de captura
 
 - [x] Iniciar nova masmorra (botão Normal) — 2026-04-28
 - [x] Iniciar trabalho (botão Ir!) — 2026-04-28
 - [x] Cancelar masmorra — 2026-04-28
+- [x] Status de trabalho (read) — 2026-04-28
+- [x] Treinamento (read + train por atributo) — 2026-04-28
+- [x] Leilão — listagem + filtros + lance/buyout (parcial, ver §Leilão) — 2026-04-28
 - [ ] Refresh "manual" do CSRF (se descobrirmos endpoint)

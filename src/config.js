@@ -27,5 +27,15 @@ export const config = {
   loop: {
     tickMinMs: parseInt(process.env.LOOP_TICK_MIN_MS || '2000', 10),
   },
+  actions: {
+    // Master kill switch. When false, every action (heal/exp/dung/work) is a
+    // no-op — bot still parses overview and updates UI, just doesn't write.
+    enabled: bool(process.env.ACTIONS_ENABLED, true),
+  },
+  ui: {
+    enabled: bool(process.env.UI_ENABLED, true),
+    port: parseInt(process.env.UI_PORT || '3000', 10),
+    autoOpen: bool(process.env.UI_AUTO_OPEN, true),
+  },
   logLevel: process.env.LOG_LEVEL || 'info',
 };

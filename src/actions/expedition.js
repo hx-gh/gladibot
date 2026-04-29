@@ -1,7 +1,11 @@
 import { config } from '../config.js';
 import { log } from '../log.js';
+import { isActionsEnabled } from '../botState.js';
 
 export async function attackExpedition(client, state) {
+  if (!isActionsEnabled()) {
+    return { acted: false, reason: 'actions disabled' };
+  }
   if ((state.expedition.cooldownSec ?? 0) > 0) {
     return { acted: false, reason: `expedition on cooldown ${state.expedition.cooldownSec}s` };
   }

@@ -27,8 +27,178 @@ function extractCooldown(html, slot) {
   return Math.max(0, end - current);
 }
 
+// Mapping IDs do DOM → chaves canônicas + skillToTrain ID do endpoint.
+// Confirmados em produção: char_f3 = Constituição → skillToTrain=4,
+//                          char_f5 = Inteligência → skillToTrain=6.
+// Os outros são inferidos do padrão sequencial.
+export const STAT_SLOTS = [
+  { domId: 'f0', key: 'strength',     label: 'Força',        trainId: 1 },
+  { domId: 'f1', key: 'dexterity',    label: 'Destreza',     trainId: 2 },
+  { domId: 'f2', key: 'agility',      label: 'Agilidade',    trainId: 3 },
+  { domId: 'f3', key: 'constitution', label: 'Constituição', trainId: 4 },
+  { domId: 'f4', key: 'charisma',     label: 'Carisma',      trainId: 5 },
+  { domId: 'f5', key: 'intelligence', label: 'Inteligência', trainId: 6 },
+];
+
+function decodeAttr(s) {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&#039;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+// Cada `data-tooltip` de char_fN_tt é um array JSON onde cada linha é
+// `[[label, value], [color1, color2]]` ou `[label, color, width]`. Procuramos
+// linhas conhecidas: o nome do stat (total), "Básico:", "Máximo:", "Por artigos:".
+// Tooltip JSON pode vir aninhado em 1 ou 2 níveis. Drilamos até as "rows".
+function unwrapTooltip(json) {
+  let rows = json;
+  while (Array.isArray(rows) && rows.length === 1 && Array.isArray(rows[0])) {
+    if (rows[0].length > 0 && Array.isArray(rows[0][0])) { rows = rows[0]; break; }
+    rows = rows[0];
+  }
+  return rows;
+}
+
+function parseStatTooltip(rawAttr, knownLabel) {
+  const decoded = decodeAttr(rawAttr);
+  let json;
+  try { json = JSON.parse(decoded); } catch { return null; }
+  const rows = unwrapTooltip(json);
+  if (!Array.isArray(rows)) return null;
+
+  const out = { total: null, base: null, max: null, items: null, itemsMax: null };
+  for (const row of rows) {
+    if (!Array.isArray(row) || !Array.isArray(row[0])) continue;
+    const [label, value] = row[0];
+    if (typeof label !== 'string') continue;
+
+    const clean = label.replace(/\s+/g, ' ').trim();
+    const num = typeof value === 'number' ? value : parseInt(String(value), 10);
+
+    if (clean === `${knownLabel}:`) out.total = num;
+    else if (clean === 'Básico:') out.base = num;
+    else if (clean === 'Máximo:') out.max = num;
+    else if (clean === 'Por artigos:') {
+      const s = String(value);
+      const m = s.match(/([+-]?\d+)/);
+      if (m) out.items = parseInt(m[1], 10);
+      const m2 = s.match(/de\s+([+-]?\d+)/);
+      if (m2) out.itemsMax = parseInt(m2[1], 10);
+    }
+  }
+  return out;
+}
+
+function parseStatsBlock(html) {
+  const stats = {};
+  for (const slot of STAT_SLOTS) {
+    const m = html.match(new RegExp(`id="char_${slot.domId}_tt"[^>]*data-tooltip="([^"]+)"`));
+    if (!m) { stats[slot.key] = null; continue; }
+    const parsed = parseStatTooltip(m[1], slot.label);
+    if (!parsed || parsed.total === null) { stats[slot.key] = null; continue; }
+    parsed.label = slot.label;
+    parsed.trainId = slot.trainId;
+    parsed.bonus = (parsed.base !== null && parsed.items !== null)
+      ? parsed.total - parsed.base - parsed.items
+      : 0;
+    stats[slot.key] = parsed;
+  }
+  return stats;
+}
+
+// Buffs:
+//   Globais (header `#globalBuffs`): div.buff-clickable com `title=`, `data-effect-end` (segs).
+//   Pessoais (`#buffbar_old`): div.buff_old com data-tooltip JSON + span data-ticker-time-left (ms).
+function parseBuffs(html) {
+  // The expiration we get from the HTML is "seconds remaining at the moment of
+  // the GET". If we stored it raw and kept showing the same number, it'd appear
+  // frozen until the next snapshot. Convert to an absolute endsAtMs so the UI
+  // can decrement live.
+  const now = Date.now();
+  const global = [];
+  const personal = [];
+
+  const gSection = html.match(/<div\s+id="globalBuffs">([\s\S]*?)<div\s+id="localBuffs">/);
+  if (gSection) {
+    const re = /<div\s+class="buff[^"]*"[^>]*?data-effect-end="(-?\d+)"[^>]*?title="([^"]+)"/g;
+    for (const m of gSection[1].matchAll(re)) {
+      const endsInSec = parseInt(m[1], 10);
+      global.push({ title: m[2], endsAtMs: now + endsInSec * 1000 });
+    }
+  }
+
+  // Personal buffs (overview only). Each <div class="buff_old"> contains both the
+  // tooltip and the ticker. Pair them by sequential occurrence.
+  const personalRe =
+    /<div\s+class="buff_old[^"]*">[\s\S]*?id="buffBar\d+"[^>]*data-tooltip="([^"]+)"[\s\S]*?data-ticker-time-left="(\d+)"/g;
+  for (const m of html.matchAll(personalRe)) {
+    let json;
+    try { json = JSON.parse(decodeAttr(m[1])); } catch { continue; }
+    const rows = unwrapTooltip(json);
+    const firstRow = Array.isArray(rows) ? rows[0] : null;
+    const name = (Array.isArray(firstRow) && typeof firstRow[0] === 'string') ? firstRow[0] : '?';
+    // Find the green "effect" line (color #00B712).
+    let effect = null;
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (Array.isArray(row) && typeof row[0] === 'string' && /00B712/i.test(String(row[1] || ''))) {
+          effect = row[0];
+          break;
+        }
+      }
+    }
+    personal.push({
+      name,
+      effect,
+      endsAtMs: now + parseInt(m[2], 10),  // ticker já vem em ms
+    });
+  }
+
+  return { global, personal };
+}
+
+// Custos de treinamento (página mod=training). O HTML repete o mesmo bloco
+// pra cada um dos 6 stats, com:
+//   <div ... id="char_fN_tt" ...> (mesmo do overview)
+//   <div class="training_costs"> CUSTO <img...> </div>
+//   <a class="training_button" href="...skillToTrain=ID..."> ←  habilitado
+//   OR <img ... button_disabled.jpg ...>                   ← sem ouro suficiente
+export function parseTraining(html) {
+  const skills = [];
+  for (const slot of STAT_SLOTS) {
+    const re = new RegExp(
+      `id="char_${slot.domId}_tt"[\\s\\S]*?<div class="training_costs">[\\s\\S]*?` +
+      `(\\d{1,3}(?:\\.\\d{3})*)\\s*<img[\\s\\S]*?` +
+      `(?:<a class="training_button"[^>]*skillToTrain=(\\d+)|<img[^>]*button_disabled)`
+    );
+    const m = html.match(re);
+    if (!m) {
+      skills.push({ key: slot.key, label: slot.label, trainId: slot.trainId, cost: null, canTrain: false });
+      continue;
+    }
+    const cost = parseInt(m[1].replace(/\./g, ''), 10);
+    skills.push({
+      key: slot.key,
+      label: slot.label,
+      trainId: slot.trainId,
+      cost,
+      canTrain: !!m[2],
+    });
+  }
+
+  const spMatch = html.match(/Pontos de habilidade dispon\w+:\s*(\d+)/);
+  const skillPoints = spMatch ? parseInt(spMatch[1], 10) : 0;
+
+  const stats = parseStatsBlock(html);
+
+  return { skills, skillPoints, stats };
+}
+
 export function parseOverview(html) {
   const state = {
+    charName: rxOne(html, /<div class="playername[^"]*">\s*([^<]+?)\s*<\/div>/),
     gold: toInt(rxOne(html, /id="sstat_gold_val"[^>]*>([\d.,]+)</)),
     rubies: toInt(rxOne(html, /id="sstat_ruby_val"[^>]*>([\d.,]+)</)),
     level: toInt(rxOne(html, /id="header_values_level"[^>]*>(\d+)</)),
@@ -40,6 +210,11 @@ export function parseOverview(html) {
     arena: { cooldownSec: null },
     grouparena: { cooldownSec: null },
     inventoryFood: [],
+    stats: parseStatsBlock(html),
+    buffs: parseBuffs(html),
+    // Working state — populated by orchestrator from a separate mod=work fetch.
+    // Overview alone has no signal that the character is currently working.
+    working: { active: false, secondsLeft: null, jobName: null },
   };
 
   // HP absoluto via data-attributes em #header_values_hp_bar
@@ -142,11 +317,263 @@ export function summarizeState(state) {
     : `${state.hpPercent ?? '?'}%`;
   const exp = state.expedition;
   const dung = state.dungeon;
-  return [
+  const parts = [
     `HP=${hpStr}`,
     `gold=${state.gold ?? '?'}`,
     `exp=${exp.points ?? '?'}/${exp.max ?? '?'}(cd ${exp.cooldownSec ?? '?'}s)`,
     `dung=${dung.points ?? '?'}/${dung.max ?? '?'}(cd ${dung.cooldownSec ?? '?'}s)`,
     `food=${state.inventoryFood.length}`,
-  ].join(' ');
+  ];
+  if (state.working?.active) {
+    parts.push(`working=${state.working.jobName || '?'}(${state.working.secondsLeft ?? '?'}s)`);
+  }
+  return parts.join(' ');
+}
+
+// Parser do leilão (mod=auction).
+//
+// Cada anúncio é um <form id="auctionForm<auctionid>"> que aninha um
+// <div class="item-i-X-Y" data-tooltip="..." data-level data-quality?...>
+// e um <div class="auction_bid_div"> com lance/buyout.
+//
+// O data-tooltip é um array JSON de DOIS elementos: [itemRows, equippedRows].
+// itemRows descreve o item leiloado; equippedRows é o que o char tem equipado
+// no slot equivalente (comparação automática, sem fetch extra). Ver
+// docs/wip/auction/leilao1-analysis.md.
+//
+// Quality: prefere [data-quality] (1=azul, 2=roxo). Ausente pode ser verde
+// (cor `lime` no nameStyle) ou comum/branco — distinguir pelo estilo inline
+// do nome no tooltip.
+//
+// Nome de item segue padrão "<base> <Prefixo>? <conector> <sufixo>?" onde
+// conector ∈ {do, da, dos, das, de}. Sem catálogo de affixes ainda — split
+// é heurístico e marcado como tal.
+
+const AFFIX_CONNECTORS_RE = /^(.*?)\s+(do|da|dos|das|de)\s+(.+)$/;
+
+function splitItemName(fullName) {
+  if (!fullName) return { baseName: null, prefix: null, suffix: null };
+  const m = fullName.match(AFFIX_CONNECTORS_RE);
+  if (!m) return { baseName: fullName, prefix: null, suffix: null };
+  const before = m[1];
+  const suffix = `${m[2]} ${m[3]}`;
+  const beforeWords = before.split(/\s+/);
+  if (beforeWords.length >= 2) {
+    const prefix = beforeWords[beforeWords.length - 1];
+    const baseName = beforeWords.slice(0, -1).join(' ');
+    return { baseName, prefix, suffix };
+  }
+  return { baseName: before, prefix: null, suffix };
+}
+
+// Cada bloco do tooltip de leilão é um array de linhas. Duas formas observadas:
+//
+//   Simples (sem comparação ou item equipado):
+//     [label:string, color:string]
+//
+//   Dual (item leiloado QUANDO há equipado pra comparar — bloco 0):
+//     [[itemLabel:string, deltaLabel:string], [color1, color2]]
+//
+// O delta já vem pré-calculado pelo jogo (ex: "+10 - 13", "+35", "+3% (+4)",
+// "0", "-2"). Nas linhas Nível/Valor/Durabilidade o segundo elemento costuma
+// ser apenas a cor (formato simples), portanto tratamos as linhas de stat
+// (que vão pra `out.stats`) como possíveis duas-formas.
+function parseAuctionTooltipBlock(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const first = rows[0];
+  if (!Array.isArray(first)) return null;
+
+  const out = {
+    name: typeof first[0] === 'string' ? first[0] : '',
+    nameStyle: typeof first[1] === 'string' ? first[1] : '',
+    stats: [],
+    level: null,
+    value: null,
+    durability: null,
+    conditioning: null,
+    soulbound: null,
+  };
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+
+    let label;
+    let delta = null;
+    let color = null;
+    if (Array.isArray(row[0])) {
+      label = typeof row[0][0] === 'string' ? row[0][0] : '';
+      delta = typeof row[0][1] === 'string' ? row[0][1] : null;
+      color = Array.isArray(row[1]) && typeof row[1][0] === 'string' ? row[1][0] : null;
+    } else {
+      label = typeof row[0] === 'string' ? row[0] : '';
+      color = typeof row[1] === 'string' ? row[1] : null;
+    }
+    if (!label) continue;
+
+    let m;
+    if ((m = label.match(/^Nível\s+(\d+)/))) {
+      out.level = parseInt(m[1], 10);
+    } else if ((m = label.match(/^Valor\s+([\d.]+)/))) {
+      out.value = parseInt(m[1].replace(/\./g, ''), 10);
+    } else if ((m = label.match(/^Durabilidade\s+(\d+)\/(\d+)/))) {
+      out.durability = { value: parseInt(m[1], 10), max: parseInt(m[2], 10) };
+    } else if ((m = label.match(/^Condicionamento\s+(\d+)\/(\d+)/))) {
+      out.conditioning = { value: parseInt(m[1], 10), max: parseInt(m[2], 10) };
+    } else if ((m = label.match(/^Vínculo a Alma de:\s*(.+)$/))) {
+      out.soulbound = m[1].trim();
+    } else {
+      out.stats.push({ label, color, delta });
+    }
+  }
+  return out;
+}
+
+function parseAuctionTooltip(rawAttr) {
+  if (!rawAttr) return null;
+  let json;
+  try { json = JSON.parse(decodeAttr(rawAttr)); } catch { return null; }
+  if (!Array.isArray(json) || json.length === 0) return null;
+  return {
+    item: parseAuctionTooltipBlock(json[0]),
+    equipped: json[1] ? parseAuctionTooltipBlock(json[1]) : null,
+  };
+}
+
+// Lê value de <option selected> dentro de um <select name=X>.
+function selectedOption(html, selectName) {
+  const re = new RegExp(
+    `<select[^>]*name="${selectName}"[^>]*>([\\s\\S]*?)</select>`
+  );
+  const block = html.match(re);
+  if (!block) return null;
+  const sel = block[1].match(/<option[^>]*\bselected\b[^>]*value="(-?\d+)"/);
+  if (sel) return sel[1];
+  // fallback: value antes de selected
+  const sel2 = block[1].match(/<option[^>]*value="(-?\d+)"[^>]*\bselected\b/);
+  return sel2 ? sel2[1] : null;
+}
+
+export function parseAuctionList(html) {
+  const result = {
+    filter: { doll: null, qry: '', itemType: null, itemLevel: null, itemQuality: null },
+    globalTimeBucket: null,
+    listings: [],
+  };
+
+  // Filtro
+  const doll = rxOne(html, /<input[^>]*name="doll"[^>]*value="(\d+)"/);
+  const qry = rxOne(html, /<input[^>]*name="qry"[^>]*value="([^"]*)"/);
+  const itemType = selectedOption(html, 'itemType');
+  const itemLevel = selectedOption(html, 'itemLevel');
+  const itemQuality = selectedOption(html, 'itemQuality');
+  result.filter = {
+    doll: doll ? parseInt(doll, 10) : null,
+    qry: qry ?? '',
+    itemType: itemType !== null ? parseInt(itemType, 10) : null,
+    itemLevel: itemLevel !== null ? parseInt(itemLevel, 10) : null,
+    itemQuality: itemQuality !== null ? parseInt(itemQuality, 10) : null,
+  };
+
+  result.globalTimeBucket = rxOne(
+    html,
+    /class="description_span_right"[^>]*>\s*<b>([^<]+)<\/b>/
+  );
+
+  // Listings: cada <form id="auctionFormN">...</form>
+  const formRe = /<form[^>]*\bid="auctionForm(\d+)"[^>]*>([\s\S]*?)<\/form>/g;
+  for (const fm of html.matchAll(formRe)) {
+    const auctionId = parseInt(fm[1], 10);
+    const formHtml = fm[2];
+
+    const itemTagMatch = formHtml.match(/<div\b([^>]*\bdata-tooltip=[^>]*)>/);
+    if (!itemTagMatch) continue;
+    const attrs = itemTagMatch[1];
+
+    const get = (name) => {
+      const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
+      const mm = attrs.match(r);
+      return mm ? mm[1] : null;
+    };
+    const getInt = (name) => {
+      const v = get(name);
+      return v !== null && v !== '' ? parseInt(v, 10) : null;
+    };
+
+    const tooltip = parseAuctionTooltip(get('data-tooltip'));
+    const fullName = tooltip?.item?.name ?? null;
+    const nameParts = splitItemName(fullName);
+
+    let quality = getInt('data-quality');
+    if (quality === null && tooltip?.item?.nameStyle) {
+      if (/lime/i.test(tooltip.item.nameStyle)) quality = 0;
+    }
+
+    const bidDivMatch = formHtml.match(/<div\s+class="auction_bid_div"[\s\S]*$/);
+    const bidDivHtml = bidDivMatch ? bidDivMatch[0] : '';
+
+    const hasBids = bidDivHtml.length > 0 && !/Não existem licitações/i.test(bidDivHtml);
+    const minBid = toInt(rxOne(formHtml, /<input[^>]*name="bid_amount"[^>]*value="(\d+)"/));
+    // O bidDivHtml tem dois preços em ouro: "Preço baixo: X" (lance mínimo) e
+    // o buyout depois do <input name="buyout">. Isolar a seção de buyout.
+    // Whitespace pode ser literal `&nbsp;` (não match em \s).
+    // Separadores no HTML real são &nbsp; (às vezes sem `;`) e o <img> de rubis
+    // vem dentro de um <a href> (link pra comprar rubis), enquanto Ouro vem solto.
+    const buyoutSection = bidDivHtml.split(/name="buyout"/)[1] ?? '';
+    const goldSepRubis = /(?:&nbsp;?|\s)*(?:<a[^>]*>)?\s*<img[^>]*title=/;
+    const buyoutGold = toInt(rxOne(buyoutSection, new RegExp(`(\\d[\\d.]*)${goldSepRubis.source}"Ouro"`)));
+    const buyoutRubies = toInt(rxOne(buyoutSection, new RegExp(`(\\d[\\d.]*)${goldSepRubis.source}"Rubis"`)));
+
+    const basisStr = get('data-basis') || '';
+    const basisParts = basisStr.split('-').map((s) => parseInt(s, 10));
+    const itemType = Number.isFinite(basisParts[0]) ? basisParts[0] : null;
+    const itemSubtype = Number.isFinite(basisParts[1]) ? basisParts[1] : null;
+
+    result.listings.push({
+      auctionId,
+      itemTypeId: getInt('data-content-type'),
+      itemType,
+      itemSubtype,
+      basis: get('data-basis'),
+      hash: get('data-hash'),
+      level: getInt('data-level'),
+      quality,
+      priceGold: getInt('data-price-gold'),
+      priceMultiplier: getInt('data-price-multiplier'),
+      measurementX: getInt('data-measurement-x'),
+      measurementY: getInt('data-measurement-y'),
+      name: fullName,
+      baseName: nameParts.baseName,
+      prefix: nameParts.prefix,
+      suffix: nameParts.suffix,
+      hasBids,
+      minBid,
+      buyoutGold,
+      buyoutRubies,
+      tooltip,
+    });
+  }
+
+  return result;
+}
+
+// Parser do HTML de mod=work. Detecta trabalho ativo via o ticker de countdown
+// que só existe quando há trabalho em andamento.
+//
+// Sinais observados em produção (BR62):
+//   <body id="workPage">
+//   <h1 ...>Trabalhar no estábulo</h1>           ← nome do job
+//   <td class="tdn">Ainda não terminou seu trabalho. ...</td>
+//   <span data-ticker-time-left="4207000" data-ticker-type="countdown" ...>
+//
+// Quando NÃO está trabalhando, a mesma URL mostra a tela de seleção de jobs
+// (sem o `data-ticker-time-left` no padrão de countdown).
+export function parseWork(html) {
+  const m = html.match(/data-ticker-time-left="(\d+)"\s+data-ticker-type="countdown"/);
+  if (!m) return { active: false, secondsLeft: null, jobName: null };
+
+  const secondsLeft = Math.max(0, Math.ceil(parseInt(m[1], 10) / 1000));
+  const nameMatch = html.match(/<h1[^>]*>\s*([^<]+?)\s*<\/h1>/);
+  const jobName = nameMatch ? nameMatch[1].trim() : null;
+  return { active: true, secondsLeft, jobName };
 }

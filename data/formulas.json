@@ -1,0 +1,436 @@
+{
+  "_meta": {
+    "source": "https://gladiatus.gamerz-bg.com/game-guide/formulas",
+    "scrapedAt": "2026-04-28T00:00:00Z",
+    "categories": [
+      "health",
+      "regen",
+      "experience",
+      "stats",
+      "combat",
+      "defense",
+      "critical",
+      "healing",
+      "items",
+      "upgrades"
+    ],
+    "count": 38,
+    "conventions": {
+      "varNaming": "camelCase, matches affixes catalog: damage, armour, strength, dexterity, agility, constitution, charisma, intelligence, health, healing, criticalAttack, criticalHealing, hardening, block, threat",
+      "rounding": "JS Math.floor / Math.ceil used inline; rawText preserves source notation ([round up] / [round down])",
+      "floorMath": "Source uses spreadsheet FLOOR.MATH(x)+1 which rounds toward 0. Translated as Math.floor(x)+1.",
+      "percentages": "Chance formulas yield a percentage value (0-100). Caller is responsible for clamping per the documented cap.",
+      "characterLevelMinus8": "Several caps divide by (characterLevel - 8). Undefined for level <= 8; caller must guard."
+    }
+  },
+  "formulas": [
+    {
+      "id": "max-health",
+      "category": "health",
+      "name": "Max Health Points",
+      "rawText": "Max Health = Health from level + Health through constitution + Health from items + Health from reinforcements",
+      "expression": "healthFromLevel + healthFromConstitution + healthFromItems + healthFromReinforcements",
+      "inputs": ["healthFromLevel", "healthFromConstitution", "healthFromItems", "healthFromReinforcements"],
+      "output": "maxHealth",
+      "notes": "Additive components. Guild/blessing/costume buffs stack additively on top."
+    },
+    {
+      "id": "health-from-level",
+      "category": "health",
+      "name": "Health from Level",
+      "rawText": "Character Level * 25",
+      "expression": "characterLevel * 25",
+      "inputs": ["characterLevel"],
+      "output": "healthFromLevel",
+      "notes": ""
+    },
+    {
+      "id": "health-from-constitution",
+      "category": "health",
+      "name": "Health from Constitution",
+      "rawText": "(Constitution*25)-50",
+      "expression": "(constitution * 25) - 50",
+      "inputs": ["constitution"],
+      "output": "healthFromConstitution",
+      "notes": "Constitution coefficient is 25, not 2 (one of the source summaries was inconsistent; verbatim text uses 25)."
+    },
+    {
+      "id": "regen-per-hour",
+      "category": "regen",
+      "name": "Base HP Regeneration per Hour",
+      "rawText": "Through Level + Through Constitution",
+      "expression": "regenFromLevel + regenFromConstitution",
+      "inputs": ["regenFromLevel", "regenFromConstitution"],
+      "output": "regenPerHour",
+      "notes": "Buffs from guild/blessing/costume stack additively."
+    },
+    {
+      "id": "regen-from-level",
+      "category": "regen",
+      "name": "Regen Through Level",
+      "rawText": "Character Level * 2",
+      "expression": "characterLevel * 2",
+      "inputs": ["characterLevel"],
+      "output": "regenFromLevel",
+      "notes": ""
+    },
+    {
+      "id": "regen-from-constitution",
+      "category": "regen",
+      "name": "Regen Through Constitution",
+      "rawText": "Constitution * 2",
+      "expression": "constitution * 2",
+      "inputs": ["constitution"],
+      "output": "regenFromConstitution",
+      "notes": ""
+    },
+    {
+      "id": "experience-required",
+      "category": "experience",
+      "name": "Experience Required for Next Level",
+      "rawText": "Levels 1-52: (10*(level+1)-5)-10 ; Levels 53-79: (10*(level+0.5))-10 ; Level 80+: unknown",
+      "expression": null,
+      "branches": [
+        {
+          "when": "level >= 1 && level <= 52",
+          "expression": "(10 * (level + 1) - 5) - 10"
+        },
+        {
+          "when": "level >= 53 && level <= 79",
+          "expression": "(10 * (level + 0.5)) - 10"
+        },
+        {
+          "when": "level >= 80",
+          "expression": null,
+          "_review": "Source marks formula as unknown for level 80+."
+        }
+      ],
+      "inputs": ["level"],
+      "output": "experienceToNext",
+      "notes": "Piecewise by level band."
+    },
+    {
+      "id": "max-stat-value",
+      "category": "stats",
+      "name": "Maximum Stat Value (Effective Cap)",
+      "rawText": "Basic trained stat + (basic / 2) + Character Level",
+      "expression": "trainedStat + (trainedStat / 2) + characterLevel",
+      "inputs": ["trainedStat", "characterLevel"],
+      "output": "maxStatValue",
+      "notes": "Items, dusts, holy oils cannot push a stat above this cap. Pacts, Godly rank 1 buffs, and reinforcements can temporarily exceed it."
+    },
+    {
+      "id": "max-training-cap",
+      "category": "stats",
+      "name": "Maximum Stat via Training",
+      "rawText": "Character Level * 5 (capped at 200 for levels 1-40)",
+      "expression": "Math.min(characterLevel * 5, characterLevel <= 40 ? 200 : Infinity)",
+      "branches": [
+        {
+          "when": "characterLevel <= 40",
+          "expression": "Math.min(characterLevel * 5, 200)"
+        },
+        {
+          "when": "characterLevel > 40",
+          "expression": "characterLevel * 5"
+        }
+      ],
+      "inputs": ["characterLevel"],
+      "output": "maxTrainedStat",
+      "notes": "Hard cap of 200 only applies through level 40."
+    },
+    {
+      "id": "min-damage",
+      "category": "combat",
+      "name": "Minimum Damage",
+      "rawText": "Weapon minimal damage + damage through items + (Strength / 10)",
+      "expression": "weaponMinDamage + damage + (strength / 10)",
+      "inputs": ["weaponMinDamage", "damage", "strength"],
+      "output": "minDamage",
+      "notes": "`damage` is the affix-catalog key for damage from items."
+    },
+    {
+      "id": "max-damage",
+      "category": "combat",
+      "name": "Maximum Damage",
+      "rawText": "Weapon maximal damage + damage through items + (Strength / 10)",
+      "expression": "weaponMaxDamage + damage + (strength / 10)",
+      "inputs": ["weaponMaxDamage", "damage", "strength"],
+      "output": "maxDamage",
+      "notes": ""
+    },
+    {
+      "id": "min-armour-absorption",
+      "category": "defense",
+      "name": "Minimum Armour Absorption",
+      "rawText": "(Armour/74)-(Armour/74)/660+1 [round up]",
+      "expression": "Math.ceil((armour / 74) - (armour / 74) / 660 + 1)",
+      "inputs": ["armour"],
+      "output": "minArmourAbsorption",
+      "notes": "Round up. Source uses 'Armour' (en-GB)."
+    },
+    {
+      "id": "max-armour-absorption",
+      "category": "defense",
+      "name": "Maximum Armour Absorption",
+      "rawText": "(Armour/66)+(Armour/660) [round down]",
+      "expression": "Math.floor((armour / 66) + (armour / 660))",
+      "inputs": ["armour"],
+      "output": "maxArmourAbsorption",
+      "notes": "Round down."
+    },
+    {
+      "id": "chance-to-hit",
+      "category": "combat",
+      "name": "Chance for Hit",
+      "rawText": "Your Dexterity / (Your Dexterity + Enemies Agility) * 100",
+      "expression": "Math.floor((dexterity / (dexterity + enemyAgility)) * 100)",
+      "inputs": ["dexterity", "enemyAgility"],
+      "output": "hitChancePct",
+      "notes": "Round down. Yields a percent (0-100)."
+    },
+    {
+      "id": "chance-double-hit",
+      "category": "combat",
+      "name": "Chance for Double Hit",
+      "rawText": "Your Charisma * Your Dexterity / Enemy Intelligence / Enemy Agility * 10",
+      "expression": "(charisma * dexterity / enemyIntelligence / enemyAgility) * 10",
+      "inputs": ["charisma", "dexterity", "enemyIntelligence", "enemyAgility"],
+      "output": "doubleHitChancePct",
+      "notes": "Source order is left-to-right division then multiply by 10. Yields a percent."
+    },
+    {
+      "id": "resilience-value",
+      "category": "defense",
+      "name": "Total Resilience Value",
+      "rawText": "(Agility/10) [round down] + hardening from items",
+      "expression": "Math.floor(agility / 10) + hardening",
+      "inputs": ["agility", "hardening"],
+      "output": "resilience",
+      "notes": "`hardening` is the affix-catalog key (resilience-from-items)."
+    },
+    {
+      "id": "resilience-cap",
+      "category": "defense",
+      "name": "Maximum Resilience Cap",
+      "rawText": "FLOOR.MATH(24.5*4*(Character Level-8)/52)+1",
+      "expression": "Math.floor(24.5 * 4 * (characterLevel - 8) / 52) + 1",
+      "inputs": ["characterLevel"],
+      "output": "resilienceCap",
+      "notes": "Undefined for characterLevel <= 8; caller must guard."
+    },
+    {
+      "id": "chance-avoid-critical",
+      "category": "defense",
+      "name": "Chance to Avoid Critical Hit",
+      "rawText": "(Resilience * 52 / (Character Level-8)) / 4",
+      "expression": "Math.min((resilience * 52 / (characterLevel - 8)) / 4, 50)",
+      "inputs": ["resilience", "characterLevel"],
+      "output": "avoidCriticalChancePct",
+      "notes": "Capped at 50%. Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "block-value",
+      "category": "defense",
+      "name": "Total Block Value",
+      "rawText": "(Strength/10) [round down] + block from items",
+      "expression": "Math.floor(strength / 10) + block",
+      "inputs": ["strength", "block"],
+      "output": "blockValue",
+      "notes": "`block` is affix-catalog key for blocking-from-items."
+    },
+    {
+      "id": "block-cap",
+      "category": "defense",
+      "name": "Maximum Block Cap",
+      "rawText": "FLOOR.MATH(49.5*6*(Character Level-8)/52)+1",
+      "expression": "Math.floor(49.5 * 6 * (characterLevel - 8) / 52) + 1",
+      "inputs": ["characterLevel"],
+      "output": "blockCap",
+      "notes": "Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "chance-to-block",
+      "category": "defense",
+      "name": "Chance to Block",
+      "rawText": "(Blocking value * 52 / (Character Level-8)) / 6",
+      "expression": "Math.min((blockValue * 52 / (characterLevel - 8)) / 6, 50)",
+      "inputs": ["blockValue", "characterLevel"],
+      "output": "blockChancePct",
+      "notes": "Capped at 50%. Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "critical-attack-value",
+      "category": "critical",
+      "name": "Total Critical Attack Value",
+      "rawText": "(Dexterity/10) [round down] + critical attack from items",
+      "expression": "Math.floor(dexterity / 10) + criticalAttack",
+      "inputs": ["dexterity", "criticalAttack"],
+      "output": "criticalAttackValue",
+      "notes": "`criticalAttack` is the affix-catalog key."
+    },
+    {
+      "id": "critical-attack-cap",
+      "category": "critical",
+      "name": "Maximum Critical Attack Cap",
+      "rawText": "FLOOR.MATH(49.5*5*(Character Level-8)/52)+1",
+      "expression": "Math.floor(49.5 * 5 * (characterLevel - 8) / 52) + 1",
+      "inputs": ["characterLevel"],
+      "output": "criticalAttackCap",
+      "notes": "Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "chance-critical-hit",
+      "category": "critical",
+      "name": "Chance for Critical Hit",
+      "rawText": "(Critical attack value * 52 / (Character Level-8)) / 5",
+      "expression": "Math.min((criticalAttackValue * 52 / (characterLevel - 8)) / 5, 50)",
+      "inputs": ["criticalAttackValue", "characterLevel"],
+      "output": "criticalHitChancePct",
+      "notes": "Capped at 50%. Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "critical-healing-value",
+      "category": "critical",
+      "name": "Total Critical Healing Value",
+      "rawText": "(Intelligence/5) [round down] + critical healing from items",
+      "expression": "Math.floor(intelligence / 5) + criticalHealing",
+      "inputs": ["intelligence", "criticalHealing"],
+      "output": "criticalHealingValue",
+      "notes": "Note divisor is 5 here (not 10 like other crit/block stats)."
+    },
+    {
+      "id": "critical-healing-cap",
+      "category": "critical",
+      "name": "Maximum Critical Healing Cap",
+      "rawText": "FLOOR.MATH(89.5*7*(Character Level-8)/52)+1",
+      "expression": "Math.floor(89.5 * 7 * (characterLevel - 8) / 52) + 1",
+      "inputs": ["characterLevel"],
+      "output": "criticalHealingCap",
+      "notes": "Undefined for characterLevel <= 8."
+    },
+    {
+      "id": "chance-critical-healing",
+      "category": "critical",
+      "name": "Chance for Critical Healing",
+      "rawText": "(Critical healing * 52 / (Character Level-8) / 8",
+      "expression": "(criticalHealingValue * 52 / (characterLevel - 8)) / 8",
+      "inputs": ["criticalHealingValue", "characterLevel"],
+      "output": "criticalHealingChancePct",
+      "notes": "Source has a formatting issue (missing close paren) but the divisor is 8 (not 7). Cap not stated explicitly on the page.",
+      "_review": "No explicit cap stated; other chance formulas cap at 50% — verify whether this one also caps."
+    },
+    {
+      "id": "normal-healing",
+      "category": "healing",
+      "name": "Normal Healing",
+      "rawText": "4/5 * Intelligence [round down] + healing from items",
+      "expression": "Math.floor((4 / 5) * intelligence) + healing",
+      "inputs": ["intelligence", "healing"],
+      "output": "normalHealing",
+      "notes": "`healing` is the affix-catalog key (healing-from-items)."
+    },
+    {
+      "id": "critical-healing-amount",
+      "category": "healing",
+      "name": "Critical Healing Amount",
+      "rawText": "2 * normal healing",
+      "expression": "2 * normalHealing",
+      "inputs": ["normalHealing"],
+      "output": "criticalHealingAmount",
+      "notes": "Doubles the normal heal when a crit-heal procs."
+    },
+    {
+      "id": "threat-mercenary",
+      "category": "combat",
+      "name": "Mercenary Threat Value",
+      "rawText": "(Charisma/10) [round down] + threat from items",
+      "expression": "Math.floor(charisma / 10) + threat",
+      "inputs": ["charisma", "threat"],
+      "output": "threatValue",
+      "notes": "Source flagged this as 'not confirmed'. Mercenary-only.",
+      "_review": "Source marks the threat formula as not confirmed."
+    },
+    {
+      "id": "market-max-level",
+      "category": "items",
+      "name": "Market Visibility — Max Item Level",
+      "rawText": "MIN(Player Level + 9, FLOOR(1.25 * Player Level))",
+      "expression": "Math.min(playerLevel + 9, Math.floor(1.25 * playerLevel))",
+      "inputs": ["playerLevel"],
+      "output": "marketMaxLevel",
+      "notes": "Effectively 1.25*level for levels 5-36, then level+9 above 36."
+    },
+    {
+      "id": "auction-min-level",
+      "category": "items",
+      "name": "Auction House — Min Item Level",
+      "rawText": "FLOOR(0.75 * Player Level)",
+      "expression": "Math.floor(0.75 * playerLevel)",
+      "inputs": ["playerLevel"],
+      "output": "auctionMinLevel",
+      "notes": "Lower bound of items visible in your auction tab."
+    },
+    {
+      "id": "auction-max-level",
+      "category": "items",
+      "name": "Auction House — Max Item Level",
+      "rawText": "MIN(Player Level + 14, CEILING(1.25 * Player Level + 5.75))",
+      "expression": "Math.min(playerLevel + 14, Math.ceil(1.25 * playerLevel + 5.75))",
+      "inputs": ["playerLevel"],
+      "output": "auctionMaxLevel",
+      "notes": "1.25*level+5.75 for levels 5-33, then level+14 above 33."
+    },
+    {
+      "id": "wearable-max-level",
+      "category": "items",
+      "name": "Wearable Item — Max Level",
+      "rawText": "Player Level + 16",
+      "expression": "playerLevel + 16",
+      "inputs": ["playerLevel"],
+      "output": "wearableMaxLevel",
+      "notes": "Hard cap on equippable item level."
+    },
+    {
+      "id": "grindstone-damage-bonus",
+      "category": "upgrades",
+      "name": "Damage Bonus by Grindstone",
+      "rawText": "Level of upgrade / 5 [round up]",
+      "expression": "Math.ceil(upgradeLevel / 5)",
+      "inputs": ["upgradeLevel"],
+      "output": "grindstoneDamageBonus",
+      "notes": "Round up."
+    },
+    {
+      "id": "powder-stat-bonus",
+      "category": "upgrades",
+      "name": "Stat Bonus by Colored Powder",
+      "rawText": "Level of powder / 7 [round down]",
+      "expression": "Math.floor(powderLevel / 7)",
+      "inputs": ["powderLevel"],
+      "output": "powderStatBonus",
+      "notes": "Round down."
+    },
+    {
+      "id": "item-gold-value",
+      "category": "items",
+      "name": "Item Gold Value",
+      "rawText": "CEILING(Base Gold * Rarity Multiplier) + Prefix Gold + Suffix Gold",
+      "expression": "Math.ceil(baseGold * rarityMultiplier) + prefixGold + suffixGold",
+      "inputs": ["baseGold", "rarityMultiplier", "prefixGold", "suffixGold"],
+      "output": "itemGoldValue",
+      "notes": "Rarity multipliers (gold/dmg/armour): common 1.0, blue 1.15, purple 1.30, orange 1.50, red 1.75, red+ 2.0."
+    },
+    {
+      "id": "item-durability",
+      "category": "items",
+      "name": "Item Durability",
+      "rawText": "ROUND(Base Durability * Rarity Multiplier) + Rarity Tier Bonus",
+      "expression": "Math.round(baseDurability * durabilityRarityMultiplier) + tierBonus",
+      "inputs": ["baseDurability", "durabilityRarityMultiplier", "tierBonus"],
+      "output": "itemDurability",
+      "notes": "Durability multipliers: common 1.0, blue 1.5, purple 2.5, orange 3.0, red 3.5, red+ 4.0. Tier bonuses: blue +1, purple +2, orange +3, red +4, red+ +5.",
+      "_review": "Source uses banker-style ROUND; JS Math.round rounds half-away-from-zero. Slight edge-case mismatch possible."
+    }
+  ]
+}

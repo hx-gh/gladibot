@@ -87,6 +87,16 @@ export class GladiatusClient {
     return html;
   }
 
+  // HTTP GET for HTML — does NOT navigate the active page. Use this for debug
+  // / inspection so you don't race with the orchestrator's `getHtml` (which
+  // would cause both navigations to abort each other). JS won't run, so any
+  // client-side rendering is missing, but server-rendered markup is intact.
+  async fetchRawHtml(path, params) {
+    return this._exec('GET', this.buildUrl(path, params), {
+      headers: { accept: 'text/html, */*' },
+    });
+  }
+
   getAjax(path, params) {
     return this._exec('GET', this.buildUrl(path, { ...params, a: Date.now() }), {
       headers: { accept: 'text/javascript, text/html, application/xml, text/xml, */*' },

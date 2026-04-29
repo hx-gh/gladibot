@@ -2,9 +2,15 @@ import { parseOverview, mergeAjaxResponse, summarizeState } from './state.js';
 import { healIfNeeded } from './actions/heal.js';
 import { attackExpedition } from './actions/expedition.js';
 import { attackDungeon } from './actions/dungeon.js';
-import { startWork } from './actions/work.js';
+import { startWork, fetchWorkStatus } from './actions/work.js';
 import { log } from './log.js';
 import { config } from './config.js';
+import { setSnapshot } from './botState.js';
+
+// Slack added on top of work.secondsLeft before next tick. Avoids racing the
+// server: if we wake exactly at end-time, the work might still be settling
+// (gold credit, status flip). 10s is generous and irrelevant on hour-scale jobs.
+const WORK_SLACK_SEC = 10;
 
 async function fetchState(client) {
   const html = await client.getHtml('/game/index.php', { mod: 'overview' });
@@ -37,6 +43,19 @@ async function maybeHeal(client, state, label) {
 
 export async function tick(client) {
   let state = await fetchState(client);
+
+  // 0. Gate "trabalhando". Overview NÃO sinaliza isso — é preciso consultar
+  //    mod=work. Se trabalhando, pula tudo (heal/exp/dung) e dorme até terminar.
+  //    Sem esse gate, dungeon points regeneram durante o trabalho e o bot
+  //    tentava atacar mesmo com personagem ocupado.
+  const work = await fetchWorkStatus(client);
+  state.working = work;
+  setSnapshot(state);
+  if (work.active) {
+    log.info(`WORKING ${work.jobName || ''} — ${work.secondsLeft}s restantes; skipping actions`);
+    return Math.max(work.secondsLeft + WORK_SLACK_SEC, Math.ceil(config.loop.tickMinMs / 1000));
+  }
+
   log.info('TICK', summarizeState(state));
 
   // 1. Heal pre-fight — cobre cenário de startup com HP crítico (ou HP que
@@ -66,6 +85,7 @@ export async function tick(client) {
 
   // 5. Re-pull state — fresh cooldowns + HP pós-luta
   const fresh = await fetchState(client);
+  setSnapshot(fresh);
 
   // 6. Heal pós-luta — se a expedição/masmorra deixou o HP abaixo do
   //    threshold, curamos AGORA (antes de dormir o cooldown), com missing

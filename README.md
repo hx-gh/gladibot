@@ -71,9 +71,21 @@ O perfil fica salvo em `./browser-data/` — próximas runs já abrem logadas, m
 
 ```bash
 node src/index.js --once          # uma iteração só (debug/teste)
-node src/index.js --loop          # loop infinito até Ctrl+C
+node src/index.js --loop          # loop infinito até Ctrl+C, sobe UI em http://localhost:3000
 node src/index.js --loop --yes    # pula o prompt de confirmação (pra automação real)
+node src/index.js --loop --no-ui  # loop sem control panel
 ```
+
+### Control panel (UI)
+
+Em `--loop`, o bot sobe um servidor Express em `127.0.0.1:3000` e abre o browser default automaticamente. A UI mostra:
+
+- **Status** — HP/Ouro/Rubis/Level/XP, pontos de expedição/masmorra com barras + cooldowns, contagem de comida.
+- **Loop** — estado (running/paused/ticking), última tick, duração, contagem total, próxima tick.
+- **Logs** — últimas 200 linhas (ring buffer in-memory) com filtro por nível e autoscroll.
+- **Controles** — `Tick now` força tick imediato; `Pause` interrompe o agendamento sem derrubar o browser do jogo; `Resume` retoma.
+
+Configurável via `.env`: `UI_PORT`, `UI_AUTO_OPEN`, `UI_ENABLED`. Logs também são escritos em `logs/session.log` (truncado a cada startup, gitignored).
 
 Quando confiar que tá estável, ligue **headless mode** no `.env`:
 
@@ -97,7 +109,8 @@ Abre `edge://inspect` no seu Edge → "inspect" → DevTools completo do Node (b
 src/
   index.js          entry, parseia flags, orquestra
   config.js         carrega .env
-  log.js            logger leve
+  log.js            logger (console + ring buffer + logs/session.log)
+  botState.js       singleton in-memory: snapshot, loopStatus, logs (ring 200)
   browser.js        Playwright bootstrap + readSession + refreshSession
   client.js         HTTP client em cima de page.request, com retry em 401/403
   state.js          parser de overview HTML + merge com JSON AJAX
@@ -106,7 +119,10 @@ src/
     expedition.js   POST /game/ajax.php?mod=location&submod=attack
     dungeon.js      parse fights + GET /game/ajax/doDungeonFight.php
     heal.js         POST /game/ajax.php?mod=inventory&submod=move
-    work.js         (stub — endpoint pendente)
+    work.js         POST /game/index.php?mod=work&submod=start
+  ui/
+    server.js       Express, endpoints /api/state /logs /tick /pause /resume
+    public/         index.html + styles.css + app.js (vanilla, polling 2s)
 docs/
   memory.md         contexto histórico
   flows.md          fluxogramas
@@ -115,9 +131,9 @@ docs/
 
 ## Limitações conscientes
 
-1. **Endpoint do "Iniciar trabalho"** ainda não capturado → `work.js` é stub. Loop fica idle quando ambos os pontos zeram.
-2. **Endpoint do "Normal" (reiniciar masmorra)** idem → quando o boss morre, o bot pula o ciclo de masmorra.
-3. **Login Google** ainda é manual (uma vez). Auto-login não tá no escopo.
+1. **Login Google** é manual (1 vez, depois cookies persistem). Auto-login não tá no escopo.
+2. **Refresh de sessão expirada** pede intervenção manual depois que o cookie de login morre (ver `DEBT-03`).
+3. **UI sem auth** — bind em `127.0.0.1` só. Não exponha pra rede sem mexer nisso.
 
 ## Documentação
 
