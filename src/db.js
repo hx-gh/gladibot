@@ -139,6 +139,23 @@ export function persistCharacters(chars) {
   }
 }
 
+// Reconstrói o bloco { name, level, stats } no shape que `pairStats` espera,
+// lendo do snapshot persistido em equipped_items. Slot vazio → null. Stats
+// vêm já no formato { label, color } herdado do parser do paperdoll
+// (parseAuctionTooltipBlock). Usado pelo recomendador de upgrade dos mercs:
+// evita re-fetch HTTP do char inteiro pra fazer a comparação localmente.
+export function readEquippedBlock(doll, slot) {
+  const dbi = getDb();
+  const row = dbi.prepare('SELECT * FROM equipped_items WHERE doll = ? AND slot = ?').get(doll, slot);
+  if (!row || row.empty) return null;
+  return {
+    name: row.name,
+    level: row.level,
+    quality: row.quality,
+    stats: JSON.parse(row.stats_json || '[]'),
+  };
+}
+
 export function readAllCharacters() {
   const dbi = getDb();
   const chars = dbi.prepare('SELECT * FROM characters ORDER BY doll').all();

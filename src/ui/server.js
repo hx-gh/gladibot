@@ -14,9 +14,11 @@ import {
   isActionsEnabled,
 } from '../botState.js';
 import { fetchTrainingStatus, trainSkill } from '../actions/training.js';
-import { fetchAuctionList } from '../actions/auction.js';
+import { fetchAuctionList, placeBid } from '../actions/auction.js';
 import { fetchAllCharacters } from '../actions/characters.js';
 import { persistCharacters, readAllCharacters } from '../db.js';
+import { buildSuggestions } from '../mercSuggestions.js';
+import { auctionLevelRange } from '../formulas.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -140,6 +142,37 @@ export function startUiServer() {
     }
   });
 
+  // Lance / compra imediata no leilão. Body JSON:
+  //   { auctionId, ttype?, buyout?, bidAmount?, rubyAmount?, filterEcho? }
+  // Gated por isActionsEnabled() (mesmo kill switch do training). Reusa
+  // actions/auction.placeBid, que já loga + marca o ID em botState.myBidAuctionIds.
+  app.post('/api/auction/bid', async (req, res) => {
+    const client = getClient();
+    if (!client) return res.status(503).json({ error: 'client not ready' });
+    if (!isActionsEnabled()) {
+      return res.status(409).json({ ok: false, error: 'actions disabled' });
+    }
+    const { auctionId, ttype, buyout = false, bidAmount, rubyAmount = 60, filterEcho = {} } = req.body || {};
+    if (!auctionId) return res.status(400).json({ ok: false, error: 'auctionId required' });
+    if (!buyout && (bidAmount === undefined || bidAmount === null)) {
+      return res.status(400).json({ ok: false, error: 'bidAmount required when buyout=false' });
+    }
+    try {
+      const result = await placeBid(client, {
+        auctionId: parseInt(auctionId, 10),
+        ttype: ttype !== undefined ? parseInt(ttype, 10) : 1,
+        buyout: !!buyout,
+        bidAmount: bidAmount !== undefined ? parseInt(bidAmount, 10) : undefined,
+        rubyAmount,
+        filterEcho,
+      });
+      res.json(result);
+    } catch (e) {
+      log.warn(`UI /api/auction/bid failed: ${e.message}`);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // Characters (principal + espelho + 4 mercs). Lazy fetch — varre doll=1..6
   // em paralelo, persiste no SQLite, retorna JSON. ?from=db lê estado salvo
   // sem re-fetch (pra Claude consumir via curl sem onerar o servidor do jogo).
@@ -189,6 +222,113 @@ export function startUiServer() {
     } catch (e) {
       log.warn(`UI /api/characters/items failed: ${e.message}`);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Faixa de level visível no leilão pelo jogo, derivada das fórmulas
+  // `auction-min-level` / `auction-max-level` em data/formulas.json. Aceita
+  // `?level=N` ou usa o level do snapshot do char ativo se omitido.
+  app.get('/api/formulas/auction-level-range', (req, res) => {
+    let level = parseInt(req.query.level, 10);
+    if (!Number.isFinite(level)) {
+      const view = getStateView();
+      level = view?.snapshot?.level ?? null;
+    }
+    if (!Number.isFinite(level)) return res.status(400).json({ error: 'level missing' });
+    res.json(auctionLevelRange(level));
+  });
+
+  // Sugestões de upgrade pros mercs (Painel 3). 1 fetch único do leilão +
+  // comparação local com o gear salvo no SQLite.
+  // Query params:
+  //   ttype       — '' (gladiador, default) ou '3' (mercenário)
+  //   itemLevel   — default = auction-min-level pelo char level
+  //   itemQuality — default = -1 (Padrão+)
+  //   slots       — quantos slots prioritários considerar por merc (1..9, default 4)
+  //   refresh     — '1' força fetchAllCharacters antes (gear/stats fresh)
+  // Dedup: candidato que aparece em ring1 E ring2 do mesmo merc é marcado
+  // com `dupOf: 'ring2'` no segundo slot pra UI esconder/agrupar.
+  app.get('/api/mercs/suggestions', async (req, res) => {
+    const client = getClient();
+    if (!client) return res.status(503).json({ error: 'client not ready' });
+    try {
+      const ttype = req.query.ttype !== undefined && req.query.ttype !== ''
+        ? parseInt(req.query.ttype, 10)
+        : undefined;
+      const itemQuality = req.query.itemQuality !== undefined ? parseInt(req.query.itemQuality, 10) : -1;
+      const slotsToConsider = (() => {
+        const n = parseInt(req.query.slots, 10);
+        if (!Number.isFinite(n)) return 4;
+        return Math.max(1, Math.min(9, n));
+      })();
+      const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+      const view = getStateView();
+      const charLevel = view?.snapshot?.level ?? null;
+      const range = charLevel ? auctionLevelRange(charLevel) : null;
+      const itemLevel = req.query.itemLevel !== undefined
+        ? parseInt(req.query.itemLevel, 10)
+        : (range?.min ?? 36);
+
+      // Refresh ou DB vazio → fetchAll antes de gerar sugestões.
+      if (refresh || readAllCharacters().length === 0) {
+        const all = await fetchAllCharacters(client);
+        persistCharacters(all);
+      }
+      const fetchOpts = { filter: { itemType: 0, itemLevel, itemQuality, doll: 1 } };
+      if (ttype !== undefined) fetchOpts.ttype = ttype;
+      const list = await fetchAuctionList(client, fetchOpts);
+      const chars = readAllCharacters();
+      const mercs = chars.filter((c) => c.doll !== 1);
+      const suggestions = buildSuggestions(list.listings, mercs, { slotsToConsider });
+
+      // Dedup entre slots (ring1/ring2 principalmente): se um mesmo
+      // auctionId aparece em mais de um slot do mesmo merc, mantemos apenas
+      // no primeiro (com priority maior) e anotamos `dupOf` no resto.
+      for (const m of suggestions) {
+        const seen = new Map();   // auctionId -> primeiro slot que listou
+        for (const s of m.suggestions) {
+          for (const c of s.candidates) {
+            const prev = seen.get(c.auctionId);
+            if (prev) {
+              c.dupOf = prev;
+            } else {
+              seen.set(c.auctionId, s.slot);
+            }
+          }
+        }
+      }
+
+      res.json({
+        ttype: ttype ?? null, itemLevel, itemQuality, slotsToConsider, refreshed: refresh,
+        charLevel, range,
+        listingsCount: list.listings.length,
+        mercs: suggestions,
+      });
+    } catch (e) {
+      log.warn(`UI /api/mercs/suggestions failed: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Debug: capturar HTML cru do leilão com filtros aplicados (POST). Útil pra
+  // refinar parser de "meu lance"/currentBid sem ter que decifrar o JSON parseado.
+  app.get('/api/debug/auction-html', async (req, res) => {
+    const client = getClient();
+    if (!client) return res.status(503).type('text').send('client not ready');
+    const params = { mod: 'auction' };
+    if (typeof req.query.ttype === 'string') params.ttype = req.query.ttype;
+    const body = {
+      doll: parseInt(req.query.doll, 10) || 1,
+      qry: typeof req.query.qry === 'string' ? req.query.qry : '',
+      itemLevel: parseInt(req.query.itemLevel, 10) || 43,
+      itemType: parseInt(req.query.itemType, 10) || 0,
+      itemQuality: parseInt(req.query.itemQuality, 10) || -1,
+    };
+    try {
+      const html = await client.postForm('/game/index.php', params, body);
+      res.type('text/plain; charset=utf-8').send(typeof html === 'string' ? html : JSON.stringify(html));
+    } catch (e) {
+      res.status(500).type('text').send(`fetch failed: ${e.message}`);
     }
   });
 

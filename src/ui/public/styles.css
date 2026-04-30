@@ -128,12 +128,13 @@ body {
 /* 3 painéis principais lado a lado, ocupam toda a altura disponível */
 .panels-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: 1.2fr 1.6fr 0.8fr;
   gap: 10px;
   min-height: 0;
 }
 .panels-row > .card {
   min-height: 0;
+  min-width: 0;  /* permite encolher abaixo do conteúdo intrínseco no grid */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -153,6 +154,32 @@ body {
 
 /* ─── Auction (Painel 2) ─── */
 .auction-card { min-height: 0; }
+.auction-view-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.auction-view-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.auction-view-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.auction-view-tab:hover { color: var(--text); }
+
 .auction-tabs {
   display: flex;
   gap: 4px;
@@ -177,8 +204,8 @@ body {
   border-color: var(--accent, #4a90e2);
 }
 .auction-filters {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1.4fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 6px 10px;
   flex-shrink: 0;
@@ -191,9 +218,13 @@ body {
   font-size: 11px;
   padding: 3px 6px;
   border-radius: 3px;
+  flex: 1 1 90px;
+  min-width: 0;
 }
+.auction-filters input { flex: 1.4 1 110px; }
 .auction-rows {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 0 10px 10px;
   display: flex;
@@ -394,6 +425,17 @@ body {
 .auction-cmp-chip.muted-chip {
   color: var(--text-muted);
   font-style: italic;
+}
+.auction-cap-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 184, 74, 0.10);
+  border: 1px solid rgba(255, 184, 74, 0.20);
+  color: #ffb84a;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .auction-prices {
   display: flex;
@@ -609,62 +651,196 @@ body {
 /* Mercenários grid */
 .mercs-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 8px;
-  padding: 6px 2px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  padding: 8px 4px;
 }
 .merc-card {
-  background: var(--card-alt, rgba(255,255,255,0.02));
+  background: var(--bg-1);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 .merc-card-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
 }
 .merc-doll {
   background: var(--accent, #5159F7);
   color: #fff;
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 2px 7px;
   font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.4px;
 }
 .merc-meta { flex: 1; min-width: 0; }
-.merc-name { font-weight: 600; font-size: 13px; }
-.merc-role { font-size: 11px; }
-.merc-armor { font-size: 10px; text-align: right; }
-.merc-hp { display: flex; align-items: center; gap: 6px; }
-.merc-hp-track {
-  flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+.merc-name {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
-.merc-hp-text { font-size: 11px; color: var(--text-dim); }
+.merc-card-lvl {
+  font-size: 10px;
+  background: var(--bg-3);
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.merc-role {
+  font-size: 11px;
+  margin-top: 1px;
+  font-style: italic;
+}
+.merc-combat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 10px;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.merc-combat-armor { color: var(--text); font-weight: 600; }
+.merc-combat-dmg { color: var(--text-muted); }
+
+.merc-hp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.merc-hp-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.merc-hp-text {
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 92px;
+  text-align: right;
+}
+
 .merc-stats {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 4px;
-  font-size: 11px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .merc-stat {
-  display: flex; flex-direction: column; align-items: center;
-  background: var(--border); border-radius: 3px; padding: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--bg-2);
+  border-radius: 4px;
+  padding: 3px 4px;
+  text-align: center;
 }
-.merc-stat-lbl { color: var(--text-dim); font-size: 9px; text-transform: uppercase; }
-.merc-stat-val { font-weight: 600; }
+.merc-stat-lbl {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+}
+.merc-stat-val {
+  font-weight: 700;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.merc-stat-bar {
+  display: block;
+  height: 3px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 1px;
+}
+.merc-stat-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80 0%, #5b9eff 100%);
+  border-radius: 2px;
+}
+
 .merc-slots {
-  display: flex; flex-direction: column; gap: 2px;
-  font-size: 11px; line-height: 1.3;
-  border-top: 1px solid var(--border); padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 6px;
 }
-.merc-slot-row { display: flex; gap: 6px; }
-.merc-slot-lbl { color: var(--text-dim); flex: 0 0 90px; }
-.merc-slot-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.merc-slot-empty { color: var(--text-dim); font-style: italic; }
+.merc-slot-line {
+  display: grid;
+  grid-template-columns: 12px 70px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.025);
+}
+.merc-slot-line:last-of-type { border-bottom: none; }
+.merc-slot-line.is-empty { opacity: 0.55; }
+.merc-slot-q {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.18);
+  display: inline-block;
+}
+.merc-slot-q.q0 { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.5); }
+.merc-slot-q.q1 { background: #5b9eff; box-shadow: 0 0 6px rgba(91,158,255,0.5); }
+.merc-slot-q.q2 { background: #c084fc; box-shadow: 0 0 6px rgba(192,132,252,0.5); }
+.merc-slot-q.q-none { background: rgba(255,255,255,0.12); }
+.merc-slot-q.empty { background: transparent; border: 1px dashed rgba(255,255,255,0.15); }
+.merc-slot-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 600;
+}
+.merc-slot-val {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.merc-slot-lvl {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  text-align: center;
+}
+.merc-slot-delta {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  min-width: 32px;
+  text-align: right;
+}
+.merc-slot-delta.is-ok { color: var(--green); }
+.merc-slot-delta.is-warn { color: #ffb84a; }
+.merc-slot-delta.is-bad { color: var(--red); }
 .char-section-head {
   display: flex;
   align-items: center;
@@ -1028,12 +1204,23 @@ body {
 
 /* ─── Responsive: viewports menores  ─── */
 @media (max-width: 1500px) {
-  .panels-row { grid-template-columns: 1.5fr 1fr 1fr; }
+  .panels-row { grid-template-columns: 1.1fr 1.6fr 0.7fr; }
   .char-resources { grid-template-columns: repeat(3, 1fr); }
   .combined-row { grid-template-columns: 80px 1fr 90px 78px; }
   .combined-row .cs-value, .combined-row .cs-breakdown { display: none; }
 }
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
+  /* Em 1280 ainda cabe 3 colunas, mas Leilão precisa de mais espaço pelo
+     conteúdo interno (filtros + view tabs). Placeholder PvP encolhe muito. */
+  .panels-row { grid-template-columns: 1fr 1.7fr 0.6fr; }
+}
+@media (max-width: 1024px) {
+  /* Abaixo disso o card placeholder não acrescenta — escondo. */
+  body { overflow: auto; }
+  .panels-row { grid-template-columns: 1fr 1.5fr; }
+  .panels-row > .placeholder-card { display: none; }
+}
+@media (max-width: 880px) {
   body { overflow: auto; }
   .panels-row { grid-template-columns: 1fr; }
   .panels-row > .card { overflow: visible; }
@@ -1130,6 +1317,487 @@ body {
 .drawer-pane .card-head { flex-shrink: 0; margin-bottom: 8px; padding-bottom: 6px; }
 .drawer-pane .log-box { flex: 1; min-height: 0; height: auto; }
 .drawer-pane .loop-grid { flex: 1; align-content: start; }
+
+/* ─── Mercs Suggestions (agora dentro do auction-card como view) ─── */
+.mercs-suggest-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 10px 0;
+}
+.mercs-suggest-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+.mercs-suggest-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.mercs-suggest-tab:hover { color: var(--text); }
+.mercs-suggest-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* hidden via [hidden] attribute — bypassa display: flex que poderia override */
+.auction-card [data-view-pane][hidden] { display: none !important; }
+.merc-suggest-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+}
+.merc-suggest-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+}
+.merc-doll-pill {
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.merc-suggest-block-head .merc-name { font-weight: 600; }
+.merc-suggest-block-head .merc-role {
+  font-size: 11px;
+  margin-left: auto;
+  font-style: italic;
+}
+
+.merc-suggest-slot-row {
+  padding: 5px 10px;
+  border-top: 1px solid rgba(255,255,255,0.03);
+}
+.merc-suggest-slot-row:first-of-type { border-top: none; }
+.merc-suggest-slot-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+.merc-suggest-slot-lbl {
+  color: var(--text);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  min-width: 64px;
+}
+.slot-flag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.4px;
+}
+.slot-flag.empty {
+  background: rgba(255, 184, 74, 0.18);
+  color: #ffb84a;
+}
+.slot-flag.urgent {
+  background: rgba(248, 113, 113, 0.16);
+  color: var(--red);
+}
+.merc-suggest-slot-current {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
+  text-align: right;
+}
+
+.merc-suggest-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.merc-suggest-candidate {
+  border-radius: 4px;
+  background: var(--bg-2);
+  border-left: 3px solid var(--border);
+  overflow: hidden;
+}
+.merc-suggest-candidate.auction-q-0 { border-left-color: #4ade80; }
+.merc-suggest-candidate.auction-q-1 { border-left-color: #5b9eff; }
+.merc-suggest-candidate.auction-q-2 { border-left-color: #c084fc; }
+.merc-suggest-candidate.auction-q-none { border-left-color: rgba(255,255,255,0.08); }
+.merc-suggest-candidate.is-expanded { background: var(--bg-3); }
+
+.merc-suggest-candidate-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 5px 8px;
+  font-size: 11px;
+  transition: background 0.08s;
+}
+.merc-suggest-candidate-row:hover {
+  background: rgba(255,255,255,0.03);
+}
+.cand-arrow {
+  color: var(--text-muted);
+  font-size: 9px;
+  width: 12px;
+}
+.cand-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.cand-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+.cand-lvl {
+  color: var(--text-muted);
+  background: var(--bg-3);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.cand-lvldelta {
+  color: var(--green);
+  font-size: 9px;
+}
+.cand-stats {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  display: inline-flex;
+  gap: 4px;
+}
+.cand-up { color: var(--green); font-weight: 600; }
+.cand-down { color: var(--red); font-weight: 600; }
+.cand-score {
+  color: var(--green);
+  font-weight: 700;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(74, 222, 128, 0.10);
+  padding: 1px 6px;
+  border-radius: 3px;
+  min-width: 32px;
+  text-align: center;
+}
+.cand-buy {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.cand-bid {
+  color: #ffb84a;
+  margin-left: 2px;
+}
+.cand-cap {
+  color: #888;
+  font-size: 9px;
+  background: rgba(255, 184, 74, 0.10);
+  border: 1px solid rgba(255, 184, 74, 0.20);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.cand-eff {
+  font-size: 9px;
+  color: var(--accent);
+  background: rgba(110, 168, 254, 0.10);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+.cand-top {
+  color: #ffb84a;
+  margin-right: 3px;
+}
+.cand-sb {
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.8;
+}
+.cand-dup {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  letter-spacing: 0.3px;
+}
+.merc-suggest-candidate.is-dup {
+  opacity: 0.55;
+}
+.merc-suggest-candidate.is-dup:hover {
+  opacity: 0.85;
+}
+
+.auction-view-spacer { flex: 1; }
+.auction-mercs-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.auction-mercs-ctrl select {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+#btnAuctionLegend.is-active {
+  background: var(--bg-3);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.auction-legend {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  flex-shrink: 0;
+  max-height: 50%;
+  overflow-y: auto;
+}
+.auction-legend[hidden] { display: none; }
+.auction-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.legend-section h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.legend-section ul {
+  margin: 0;
+  padding-left: 14px;
+}
+.legend-section li {
+  margin: 2px 0;
+  color: var(--text-dim);
+}
+.legend-section li b { color: var(--text); }
+.legend-section code,
+.legend-formula {
+  background: rgba(0,0,0,0.25);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--accent);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+.legend-formula {
+  display: block;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+}
+.legend-icons {
+  list-style: none;
+  padding-left: 0;
+}
+.legend-icons li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.legend-ic {
+  display: inline-flex;
+  min-width: 56px;
+  justify-content: flex-start;
+}
+.legend-note {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.cmp-table tr.is-wasted .cmp-it {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.cmp-cap-tag {
+  font-size: 8px;
+  background: rgba(255, 184, 74, 0.12);
+  color: #ffb84a;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.merc-suggest-candidate-detail {
+  padding: 6px 10px 8px 25px;
+  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,0.15);
+}
+.merc-suggest-candidate-detail .cmp-table {
+  width: 100%;
+  font-size: 10px;
+}
+.merc-suggest-candidate-detail .auction-compare-head {
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.merc-suggest-candidate-detail[hidden] { display: none; }
+
+.merc-suggest-empty-row {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 2px 4px;
+}
+
+.flash-highlight {
+  animation: flash-row 1.1s ease-out;
+}
+@keyframes flash-row {
+  0% { box-shadow: 0 0 0 2px rgba(255, 184, 74, 0.6); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 184, 74, 0); }
+}
+
+/* ─── Auction bid chip ─── */
+.auction-bid-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.auction-bid-chip.is-has-bid {
+  background: rgba(255, 170, 0, 0.14);
+  color: #ffb84a;
+}
+.auction-bid-chip.is-no-bid {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+}
+.auction-bid-chip.is-mine {
+  background: rgba(110, 168, 254, 0.18);
+  color: var(--accent);
+  font-weight: 600;
+  border: 1px solid rgba(110, 168, 254, 0.35);
+}
+
+/* ─── Bid actions (botões Lance/Comprar no card) ─── */
+.auction-bid-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  align-items: center;
+}
+.auction-bid-actions .muted { font-size: 10px; }
+.auction-bid-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.auction-bid-btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--accent);
+}
+.auction-bid-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.auction-bid-btn.is-buyout {
+  background: rgba(74, 222, 128, 0.10);
+  border-color: rgba(74, 222, 128, 0.30);
+  color: var(--green);
+}
+.auction-bid-btn.is-buyout:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.18);
+}
+.auction-bid-btn.is-cancel {
+  background: transparent;
+  color: var(--text-dim);
+}
+.auction-bid-form {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex: 1;
+}
+.auction-bid-form input {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  width: 90px;
+  font-variant-numeric: tabular-nums;
+}
+.auction-bid-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.auction-bid-status {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.auction-bid-status.is-error { color: var(--red); font-style: normal; }
+.auction-bid-status.is-ok    { color: var(--green); font-style: normal; }
+.auction-row.is-mine {
+  border-color: rgba(110, 168, 254, 0.30);
+  background: linear-gradient(180deg, rgba(110, 168, 254, 0.04), transparent);
+}
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-0); }

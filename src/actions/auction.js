@@ -1,8 +1,9 @@
 import { log } from '../log.js';
-import { isActionsEnabled } from '../botState.js';
+import { isActionsEnabled, getStateView, markMyBid, getMyBidIds } from '../botState.js';
 import { parseAuctionList } from '../state.js';
 import { enrichListingWithAffixes } from '../affixCatalog.js';
 import { buildComparison } from '../itemCompare.js';
+import { enrichListingWithWaste } from '../mercSuggestions.js';
 
 // Fase 1 do Painel 2: read-only.
 //
@@ -16,10 +17,51 @@ import { buildComparison } from '../itemCompare.js';
 const DEFAULT_FILTER = {
   doll: 1,
   qry: '',
-  itemLevel: 36,
+  itemLevel: 43,
   itemType: 0,
   itemQuality: -1,
 };
+
+// Enriquece um result de parseAuctionList in-place: affixes, comparison, waste
+// check, reforço de myBid via tracking local, totals. Compartilhado entre
+// fetchAuctionList e placeBid (a resposta do POST de bid também é uma listing).
+function enrichResult(result, { onlyTop = false } = {}) {
+  const snap = getStateView()?.snapshot ?? null;
+  const charStats = snap?.stats ?? null;
+  const charName = snap?.charName ?? null;
+  const myIds = getMyBidIds();
+
+  for (const l of result.listings) {
+    enrichListingWithAffixes(l);
+    const cmp = buildComparison(l);
+    l.category = cmp.category;
+    l.comparison = cmp.comparison;
+    if (l.comparison?.hasComparison && charStats) {
+      enrichListingWithWaste(l, charStats);
+    }
+    // Resolve `myBid`: parser expõe o `bidderName` cru (link `<a mod=player>`);
+    // comparamos com o nome do char ativo. Tracking local em `myIds` cobre
+    // edge case (parser falhou em capturar bidderName, ou caracteres especiais
+    // no nome diferem entre overview e leilão).
+    if (l.bidderName && charName && l.bidderName.toLowerCase() === charName.toLowerCase()) {
+      l.myBid = true;
+    } else if (myIds.has(l.auctionId)) {
+      l.myBid = true;
+    }
+  }
+  if (onlyTop) {
+    result.listings = result.listings.filter((l) => l.topAny);
+  }
+  result.totals = {
+    visible: result.listings.length,
+    topAny: result.listings.filter((l) => l.topAny).length,
+    fullyClassified: result.listings.filter((l) => l.affixCoverage === 2).length,
+    upgrades: result.listings.filter((l) => l.comparison?.summary?.isUpgrade).length,
+    withBids: result.listings.filter((l) => l.hasBids).length,
+    myBids: result.listings.filter((l) => l.myBid).length,
+  };
+  return result;
+}
 
 export async function fetchAuctionList(client, opts = {}) {
   const { ttype, filter, onlyTop = false } = opts;
@@ -35,23 +77,7 @@ export async function fetchAuctionList(client, opts = {}) {
     const html = await client.fetchRawHtml('/game/index.php', params);
     result = parseAuctionList(html);
   }
-
-  for (const l of result.listings) {
-    enrichListingWithAffixes(l);
-    const cmp = buildComparison(l);
-    l.category = cmp.category;
-    l.comparison = cmp.comparison;
-  }
-  if (onlyTop) {
-    result.listings = result.listings.filter((l) => l.topAny);
-  }
-  result.totals = {
-    visible: result.listings.length,
-    topAny: result.listings.filter((l) => l.topAny).length,
-    fullyClassified: result.listings.filter((l) => l.affixCoverage === 2).length,
-    upgrades: result.listings.filter((l) => l.comparison?.summary?.isUpgrade).length,
-  };
-  return result;
+  return enrichResult(result, { onlyTop });
 }
 
 export async function placeBid(client, params = {}) {
@@ -72,7 +98,7 @@ export async function placeBid(client, params = {}) {
     auctionid: auctionId,
     qry: filterEcho.qry ?? '',
     itemType: filterEcho.itemType ?? 0,
-    itemLevel: filterEcho.itemLevel ?? 36,
+    itemLevel: filterEcho.itemLevel ?? 43,
     itemQuality: filterEcho.itemQuality ?? -1,
     buyouthd: buyout ? '1' : '0',
   };
@@ -89,6 +115,11 @@ export async function placeBid(client, params = {}) {
     { mod: 'auction', submod: 'placeBid', ttype, rubyAmount },
     body
   );
-  const list = parseAuctionList(typeof result === 'string' ? result : '');
+  // Marca o ID localmente: o parser ainda não detecta confiavelmente "meu lance"
+  // pelo HTML (sem sample pós-bid em produção). Para buyout o item some da
+  // listagem, então marcar é inofensivo (o ID simplesmente não vai existir mais).
+  markMyBid(auctionId);
+  const parsed = parseAuctionList(typeof result === 'string' ? result : '');
+  const list = enrichResult(parsed);
   return { ok: true, list };
 }

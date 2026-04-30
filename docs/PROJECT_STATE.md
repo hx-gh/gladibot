@@ -20,7 +20,8 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 |---|---|---|
 | `src/browser.js` (Playwright bootstrap) | ✅ Pronto | Detecta login multi-aba; readSession navega overview pra extrair `sh`+`csrf` (meta tag) |
 | `src/client.js` (HTTP + retry em 401/403) | ✅ Pronto | `getHtml` via `page.goto` (JS roda); auto-refresh CSRF |
-| `src/state.js` (parser overview) | ✅ Pronto | Parser por IDs específicos (gold/HP/pontos/cooldowns/inventário) — validado em produção |
+| `src/state.js` (parser overview) | ✅ Pronto | Parser por IDs específicos (gold/HP/pontos/cooldowns/inventário); parsers de char/paperdoll/leilão dual-format — validado em produção |
+| `src/itemCompare.js` (pareamento e consolidação) | ✅ Pronto | `pairStats(itemBlock, equippedBlock, {useGameDelta})`, `consolidateMainStats`, `summarizeRows` com score lvlDiff/5, `buildComparison`. Dual-format parsing, flat+% consolidação pra 6 atributos (DEC-11, DEC-12) |
 | `src/actions/heal.js` | ✅ Pronto | Greedy "não extrapolar" |
 | `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
 | `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai |
@@ -28,7 +29,9 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → AFK fallback (lowHp+noFood→work 8h) → exp → masm → work fallback (pontos zerados) → heal post; chama `setSnapshot` a cada parse |
 | `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
 | `src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
-| `src/actions/auction.js` (read-only) | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})`. `placeBid` gated, não plugado em runtime |
+| `src/actions/auction.js` | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})` + `placeBid` plugado via UI (POST `/api/auction/bid`). Marca ID em `botState.myBidAuctionIds` pra parser cobrir gap até sample real |
+| `src/mercSuggestions.js` (recomendador v2) | ✅ Pronto | DEC-20. Score magnitude-weighted (`statWeight × roleBoost × Δ`), waste check, cost efficiency, top affix bonus, dedup ring1/ring2, soulbound flag. Exporta `enrichListingWithWaste` reusado pelo Painel 2 |
+| `src/formulas.js` (evaluator) | ✅ Pronto | Mini-evaluator de `data/formulas.json`. `auctionLevelRange(playerLevel)` aplica `auction-min-level` / `auction-max-level` pra popular `<select>` dinamicamente |
 | `src/actions/characters.js` | ✅ Pronto | `fetchCharacter(client, doll)` + `fetchAllCharacters(client)`. Varre doll=1..6 em paralelo. Usa `noXhr: true` (DEC-17) |
 | `src/db.js` (SQLite via node:sqlite) | ✅ Pronto | DEC-18. Schema characters + equipped_items, upsert sem histórico. WAL mode. data/state.db gitignored |
 | `src/state.js` parsers de char (paperdoll) | ✅ Pronto | `parseEquipped`, `parseDollTabs`, `parseCharSnapshot`. 9 slots equipados (helm/weapon/offhand/armor/ring1/ring2/pants/boots/amulet) |
@@ -65,6 +68,9 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Resiliência: tick errors não derrubam loop (warn + retry 30s) | 2026-04-28 |
 | AFK fallback no orchestrator: HP baixo + sem comida → Rapaz do Estábulo 8h (DEC-16) | 2026-04-29 |
 | Painel 4 Personagens — Tab Mercenários no card Char: parser de paperdoll (9 slots) + actions/characters.js + SQLite + endpoints `/api/characters[/attributes\|/items]` + UI grid de 6 cards (DEC-17, DEC-18) | 2026-04-29 |
+| Painel 3 Sugestões Mercs — recomendador de upgrade pros 4 mercs em 1 fetch único (`/api/mercs/suggestions`), comparação local via SQLite (`readEquippedBlock`) reusando `pairStats`/`summarizeRows`. Click no candidato → scroll+expand no Painel 2 | 2026-04-29 |
+| Auction list — chip "com lance / sem lance" no card de listing (rendering do `hasBids` que o parser já produzia) | 2026-04-29 |
+| Painel 2 Leilão — Bid via UI: botões Lance/Comprar por listing, parser estendido (`myBid`/`currentBid`/`formTtype`), endpoint `POST /api/auction/bid` gated, filtros "só com lances"/"só meus lances", chip ★ "MEU LANCE" e tracking local de IDs em `botState.myBidAuctionIds` (DEC-21) | 2026-04-29 |
 
 ### Em andamento
 
@@ -75,11 +81,11 @@ _(nenhuma)_
 | Feature | Bloqueio |
 |---|---|
 | Refresh de sessão automático | Não-MVP. Ver DEBT-03 |
-| **Painel 2 Leilão Fase 2:** catálogo SQLite + sniper de subvalorizados + UI de regras autobuy + executor automático | Depende da Fase 1 (✅) e do uso real do parser |
+| **Painel 2 Leilão Fase 2:** catálogo SQLite + sniper de subvalorizados + UI de regras autobuy + executor automático | Bid manual via UI ✅ entregue 2026-04-29; autobuy automático segue gated até regras + sniper |
 | **Painel 3: Forja** (Fornalha + Fundição + Bancada + Horreum) | Mapear endpoints AJAX de cada uma; precisa de cURL via DevTools no jogo real |
 | Tab "Lojas" no Painel 2 (Mercado + estabelecimentos do menu) | Subordinada a evolução do Painel 2 |
 | **Aplicar fórmulas no projeto** (evaluator + valores derivados na UI: DPS estimado, EHP, hit chance, regen real, caps) | Próxima sessão |
-| Recomendador de upgrade (parser de inventário equipado, comparar com tooltip duplo do leilão) | Paralelo |
+| ~~Recomendador de upgrade~~ | ✅ Entregue 2026-04-29 (Painel 3 Sugestões Mercs) |
 | Pendências de captura do leilão | `ttype` semantics; marker "seu lance"; aba Tudo sem filtro — descobrem rodando o bot |
 
 ## Próximas Ações Sugeridas

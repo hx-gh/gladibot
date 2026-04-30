@@ -63,6 +63,13 @@ const els = {
   tabInfos: document.querySelectorAll('.char-tab-info'),
   mercsGrid: document.getElementById('mercsGrid'),
   btnRefreshChars: document.getElementById('btnRefreshChars'),
+  // mercs suggestions (now inside the auction card)
+  mercsSuggestBody: document.getElementById('mercsSuggestBody'),
+  auctionViewTabs: document.getElementById('auctionViewTabs'),
+  aucMercSlots: document.getElementById('aucMercSlots'),
+  btnRefreshMercsStats: document.getElementById('btnRefreshMercsStats'),
+  btnAuctionLegend: document.getElementById('btnAuctionLegend'),
+  auctionLegend: document.getElementById('auctionLegend'),
   // auction
   auctionTabs: document.getElementById('auctionTabs'),
   auctionRows: document.getElementById('auctionRows'),
@@ -74,6 +81,8 @@ const els = {
   aucQry: document.getElementById('aucQry'),
   aucOnlyTop: document.getElementById('aucOnlyTop'),
   aucOnlyUpgrades: document.getElementById('aucOnlyUpgrades'),
+  aucOnlyWithBids: document.getElementById('aucOnlyWithBids'),
+  aucOnlyMyBids: document.getElementById('aucOnlyMyBids'),
   // logs
   logBox: document.getElementById('logBox'),
   logLevel: document.getElementById('logLevel'),
@@ -316,14 +325,49 @@ async function onTrainClick(skillId) {
 const QUALITY_LABEL = { 0: 'verde', 1: 'azul', 2: 'roxo' };
 let aucTtype = ''; // '' = aba default (gladiador), '3' = mercenário
 let aucOnlyUpgrades = false;
+let aucOnlyWithBids = false;
+let aucOnlyMyBids = false;
+let aucView = 'listing'; // 'listing' | 'mercs'
 const auctionExpanded = new Set(); // auctionIds expandidos (preserva entre re-renders)
 
-async function refreshAuction() {
-  els.btnRefreshAuction.disabled = true;
+// Popula o `<select aucItemLevel>` com opções no range visível pelo jogo
+// (auction-min-level..auction-max-level pelas fórmulas). Roda 1x na inicialização
+// — o range só muda quando o char sobe de level, e o user pode clicar ⟳ se notar.
+let auctionLevelRangeCache = null;
+async function ensureAuctionLevelOptions() {
+  if (auctionLevelRangeCache) return auctionLevelRangeCache;
+  try {
+    const data = await fetchJson('/api/formulas/auction-level-range');
+    if (data?.min == null || data?.max == null) return null;
+    auctionLevelRangeCache = data;
+    const previous = els.aucItemLevel.value;
+    const opts = [];
+    // Steps de 6: bate com a granularidade tradicional de tiers do jogo.
+    const stepStart = Math.max(1, Math.floor(data.min / 6) * 6);
+    for (let l = stepStart; l <= data.max; l += 6) {
+      if (l >= data.min) opts.push(l);
+    }
+    if (!opts.includes(data.max)) opts.push(data.max);
+    if (!opts.includes(data.min)) opts.unshift(data.min);
+    els.aucItemLevel.innerHTML = opts.map((l) =>
+      `<option value="${l}">Lvl ${l}+</option>`,
+    ).join('');
+    // Default: o min level (mais permissivo). Mantém escolha prévia se ainda válida.
+    if (previous && opts.includes(parseInt(previous, 10))) {
+      els.aucItemLevel.value = previous;
+    } else {
+      els.aucItemLevel.value = String(data.min);
+    }
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function refreshAuctionListing() {
   els.auctionRows.innerHTML = '<div class="muted" style="text-align:center;padding:10px">Carregando…</div>';
   const params = new URLSearchParams();
   if (aucTtype) params.set('ttype', aucTtype);
-  // Sempre envia filtro — a página default não filtra mas POST ecoa nas hiddens dos forms.
   params.set('itemType', els.aucItemType.value);
   params.set('itemLevel', els.aucItemLevel.value);
   params.set('itemQuality', els.aucItemQuality.value);
@@ -334,9 +378,59 @@ async function refreshAuction() {
     renderAuction(data);
   } catch (e) {
     els.auctionRows.innerHTML = `<div class="muted" style="text-align:center;padding:10px">falha: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+let pendingRefreshStats = false;
+
+async function refreshMercSuggestionsView() {
+  els.mercsSuggestBody.innerHTML = '<div class="muted" style="text-align:center;padding:14px">Buscando leilão e comparando…</div>';
+  const params = new URLSearchParams();
+  if (aucTtype) params.set('ttype', aucTtype);
+  params.set('itemLevel', els.aucItemLevel.value);
+  params.set('itemQuality', els.aucItemQuality.value);
+  if (els.aucMercSlots) params.set('slots', els.aucMercSlots.value);
+  if (pendingRefreshStats) {
+    params.set('refresh', '1');
+    pendingRefreshStats = false;
+  }
+  try {
+    const data = await fetchJson(`/api/mercs/suggestions?${params}`);
+    renderMercSuggestions(data);
+  } catch (e) {
+    els.mercsSuggestBody.innerHTML = `<div class="muted" style="text-align:center;padding:14px">falha: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function refreshAuction() {
+  els.btnRefreshAuction.disabled = true;
+  try {
+    if (aucView === 'mercs') {
+      await refreshMercSuggestionsView();
+    } else {
+      await refreshAuctionListing();
+    }
   } finally {
     setTimeout(() => (els.btnRefreshAuction.disabled = false), 300);
   }
+}
+
+// Aplica visibilidade de filtros e panes conforme a view ativa.
+function applyAuctionView() {
+  document.querySelectorAll('[data-view-pane]').forEach((el) => {
+    el.hidden = el.dataset.viewPane !== aucView;
+  });
+  document.querySelectorAll('[data-view-only]').forEach((el) => {
+    const show = el.dataset.viewOnly === aucView;
+    if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+      el.style.display = show ? '' : 'none';
+    } else {
+      el.hidden = !show;
+    }
+  });
+  els.auctionViewTabs.querySelectorAll('.auction-view-tab').forEach((b) =>
+    b.classList.toggle('active', b.dataset.view === aucView),
+  );
 }
 
 function affixChip(value, catalog) {
@@ -410,11 +504,13 @@ function renderCompareTable(comparison) {
     ? `${escapeHtml(comparison.equippedName)}${comparison.equippedLevel ? ` · Lvl ${comparison.equippedLevel}` : ''}`
     : '—';
   const rows = comparison.rows.map((r) => {
-    const cls = r.sign > 0 ? 'is-up' : r.sign < 0 ? 'is-down' : 'is-same';
+    const baseCls = r.sign > 0 ? 'is-up' : r.sign < 0 ? 'is-down' : 'is-same';
+    const wasted = r.wasted ? ' is-wasted' : '';
+    const wastedHint = r.wasted ? ' <span class="cmp-cap-tag" title="stat já no max do merc — ganho será clamped">cap</span>' : '';
     return `
-      <tr class="${cls}">
+      <tr class="${baseCls}${wasted}">
         <td class="cmp-eq">${r.equippedLabel ? escapeHtml(r.equippedLabel) : '<span class="muted">—</span>'}</td>
-        <td class="cmp-it">${r.itemLabel ? escapeHtml(r.itemLabel) : '<span class="muted">—</span>'}</td>
+        <td class="cmp-it">${r.itemLabel ? escapeHtml(r.itemLabel) : '<span class="muted">—</span>'}${wastedHint}</td>
         <td class="cmp-dt">${signGlyph(r.sign)} ${escapeHtml(deltaText(r))}</td>
       </tr>`;
   }).join('');
@@ -451,16 +547,35 @@ function renderAuctionRow(l) {
   } else if (sum?.isUpgrade) {
     topBadge = `<span class="auction-upgrade-badge" title="${upgradeTooltip}">↑ UPGRADE</span>`;
   }
+  const wastedChip = cmp?.hasComparison && sum?.wastedUps > 0
+    ? `<span class="auction-cap-chip" title="${sum.wastedUps} stat(s) já no max do char: ${(sum.atCap || []).join(', ')}">${sum.wastedUps}⌃cap</span>`
+    : '';
   const summaryChip = cmp?.hasComparison
     ? `<span class="auction-cmp-chip ${sum.isUpgrade ? 'is-up' : sum.up < sum.down ? 'is-down' : ''}" title="${upgradeTooltip}">${sum.up}↑ ${sum.down}↓${sum.same ? ' ' + sum.same + '=' : ''}${sum.lvlDiff ? ` · lvlΔ${sum.lvlDiff > 0 ? '+' : ''}${sum.lvlDiff}` : ''}</span>`
     : `<span class="auction-cmp-chip muted-chip">sem comparação</span>`;
+  // O servidor não expõe valor exato do lance atual — só o `nextMinBid` (próximo
+  // mínimo, ~5% acima do lance corrente). Quando há lance, mostra quem é.
+  const bidChip = l.myBid
+    ? `<span class="auction-bid-chip is-mine" title="você é o licitador atual · próximo mínimo: ${fmtNum(l.nextMinBid)}g">★ meu lance</span>`
+    : l.hasBids
+      ? `<span class="auction-bid-chip is-has-bid" title="licitador: ${escapeHtml(l.bidderName || '?')} · próximo mínimo: ${fmtNum(l.nextMinBid)}g">◆ ${escapeHtml(l.bidderName || 'com lance')}</span>`
+      : `<span class="auction-bid-chip is-no-bid">sem lance</span>`;
   const category = l.category
     ? `<span class="auction-cat-chip">${escapeHtml(l.category)}</span>`
     : '';
   const expanded = auctionExpanded.has(l.auctionId);
 
+  // Botões de ação. Disabled visualmente quando actions off (mensagem explicativa).
+  const actDisabled = !actionsEnabled;
+  const actTitle = actDisabled ? 'actions desabilitadas — habilite no topbar' : '';
+  const bidActions = `
+    <div class="auction-bid-actions" data-actions-for="${l.auctionId}">
+      <button class="auction-bid-btn auction-action-bid" data-auction-id="${l.auctionId}" data-min="${l.minBid ?? ''}" ${actDisabled ? 'disabled' : ''} title="${actTitle || 'Dar lance'}">Lance</button>
+      <button class="auction-bid-btn is-buyout auction-action-buyout" data-auction-id="${l.auctionId}" ${actDisabled || l.buyoutGold === null ? 'disabled' : ''} title="${actTitle || 'Comprar imediato'}">Comprar</button>
+      <span class="auction-bid-status muted" data-status-for="${l.auctionId}"></span>
+    </div>`;
   return `
-    <article class="auction-row ${qClass} ${l.topAny ? 'is-top' : ''} ${rec.isRecommended ? 'is-recommended' : sum?.isUpgrade ? 'is-upgrade' : ''} ${expanded ? 'is-expanded' : ''}" data-auction-id="${l.auctionId}">
+    <article class="auction-row ${qClass} ${l.topAny ? 'is-top' : ''} ${rec.isRecommended ? 'is-recommended' : sum?.isUpgrade ? 'is-upgrade' : ''} ${expanded ? 'is-expanded' : ''} ${l.myBid ? 'is-mine' : ''}" data-auction-id="${l.auctionId}">
       <header class="auction-row-head">
         <div class="auction-row-title">
           <span class="auction-name" title="${escapeHtml(l.name || '')}">${topMark}${escapeHtml(l.name || l.baseName || '?')}</span>
@@ -479,11 +594,14 @@ function renderAuctionRow(l) {
       </div>
       <footer class="auction-row-foot">
         ${summaryChip}
+        ${wastedChip}
+        ${bidChip}
         <div class="auction-prices">
           <span class="auction-price-bid"><span class="muted">min</span> ${fmtNum(l.minBid)}<span class="muted">g</span></span>
           <span class="auction-price-buy"><span class="muted">buy</span> ${buyoutBits.join(' + ') || '—'}</span>
         </div>
       </footer>
+      ${bidActions}
       <div class="auction-compare" ${expanded ? '' : 'hidden'}>${expanded ? renderCompareTable(cmp) : ''}</div>
     </article>`;
 }
@@ -497,10 +615,17 @@ function renderAuction(data) {
   if (aucOnlyUpgrades) {
     listings = listings.filter((l) => l.comparison?.summary?.isUpgrade);
   }
+  if (aucOnlyWithBids) {
+    listings = listings.filter((l) => l.hasBids);
+  }
+  if (aucOnlyMyBids) {
+    listings = listings.filter((l) => l.myBid);
+  }
   const upBits = t.upgrades ? ` · ${t.upgrades}↑` : '';
+  const bidBits = t.withBids ? ` · ${t.withBids}◆${t.myBids ? ` (${t.myBids}★)` : ''}` : '';
   const summary = data.globalTimeBucket
-    ? `${data.globalTimeBucket} · ${listings.length}/${data.listings.length} itens · ${t.topAny ?? 0}⭐${upBits}`
-    : `${listings.length}/${data.listings.length} itens · ${t.topAny ?? 0}⭐${upBits}`;
+    ? `${data.globalTimeBucket} · ${listings.length}/${data.listings.length} itens · ${t.topAny ?? 0}⭐${upBits}${bidBits}`
+    : `${listings.length}/${data.listings.length} itens · ${t.topAny ?? 0}⭐${upBits}${bidBits}`;
   els.auctionTimeBucket.textContent = summary;
   if (!listings.length) {
     const msg = aucOnlyUpgrades && data.listings.length
@@ -512,8 +637,130 @@ function renderAuction(data) {
   els.auctionRows.innerHTML = listings.map(renderAuctionRow).join('');
 }
 
+// Bid actions: clica em "Lance" → troca o painel de actions por um form
+// inline (input + Confirmar/Cancelar). "Comprar" → confirm() + POST direto.
+function setBidStatus(auctionId, msg, kind = '') {
+  const el = els.auctionRows.querySelector(`[data-status-for="${auctionId}"]`);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = `auction-bid-status ${kind ? `is-${kind}` : 'muted'}`;
+}
+
+function buildFilterEcho() {
+  return {
+    qry: els.aucQry.value || '',
+    itemType: parseInt(els.aucItemType.value, 10),
+    itemLevel: parseInt(els.aucItemLevel.value, 10),
+    itemQuality: parseInt(els.aucItemQuality.value, 10),
+  };
+}
+
+async function doPlaceBid(auctionId, opts) {
+  // O action= do form vem com ttype específico — usamos esse como fonte de
+  // verdade. Aba só fallback quando o parser não capturou (sample antigo).
+  const listing = lastAuctionData?.listings.find((x) => x.auctionId === auctionId);
+  const ttype = listing?.formTtype ?? (aucTtype ? parseInt(aucTtype, 10) : 1);
+  const body = {
+    auctionId,
+    ttype,
+    filterEcho: buildFilterEcho(),
+    ...opts,
+  };
+  setBidStatus(auctionId, 'enviando…');
+  try {
+    const res = await fetch('/api/auction/bid', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      setBidStatus(auctionId, data.reason || data.error || `HTTP ${res.status}`, 'error');
+      return;
+    }
+    setBidStatus(auctionId, opts.buyout ? 'comprado!' : 'lance enviado', 'ok');
+    setTimeout(() => refreshAuction(), 600);
+  } catch (e) {
+    setBidStatus(auctionId, e.message, 'error');
+  }
+}
+
+function showBidForm(auctionId, defaultMin) {
+  const container = els.auctionRows.querySelector(`[data-actions-for="${auctionId}"]`);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="auction-bid-form">
+      <span class="muted">lance:</span>
+      <input type="number" min="0" step="1" value="${defaultMin || 0}" data-bid-input="${auctionId}" />
+      <button class="auction-bid-btn auction-bid-confirm" data-confirm="${auctionId}">Confirmar</button>
+      <button class="auction-bid-btn is-cancel auction-bid-cancel" data-cancel="${auctionId}">Cancelar</button>
+    </div>
+    <span class="auction-bid-status muted" data-status-for="${auctionId}"></span>`;
+  const input = container.querySelector(`[data-bid-input="${auctionId}"]`);
+  if (input) { input.focus(); input.select(); }
+}
+
+function restoreBidActions(auctionId) {
+  if (!lastAuctionData) return;
+  const l = lastAuctionData.listings.find((x) => x.auctionId === auctionId);
+  if (!l) return;
+  const container = els.auctionRows.querySelector(`[data-actions-for="${auctionId}"]`);
+  if (!container) return;
+  const actDisabled = !actionsEnabled;
+  const actTitle = actDisabled ? 'actions desabilitadas — habilite no topbar' : '';
+  container.innerHTML = `
+    <button class="auction-bid-btn auction-action-bid" data-auction-id="${auctionId}" data-min="${l.minBid ?? ''}" ${actDisabled ? 'disabled' : ''} title="${actTitle || 'Dar lance'}">Lance</button>
+    <button class="auction-bid-btn is-buyout auction-action-buyout" data-auction-id="${auctionId}" ${actDisabled || l.buyoutGold === null ? 'disabled' : ''} title="${actTitle || 'Comprar imediato'}">Comprar</button>
+    <span class="auction-bid-status muted" data-status-for="${auctionId}"></span>`;
+}
+
 // Event delegation: clicar no botão de expandir alterna a comparação inline.
 els.auctionRows.addEventListener('click', (e) => {
+  // Bid action: abrir form inline
+  const bidBtn = e.target.closest('.auction-action-bid');
+  if (bidBtn) {
+    const id = parseInt(bidBtn.dataset.auctionId, 10);
+    if (Number.isFinite(id)) {
+      const min = parseInt(bidBtn.dataset.min, 10) || 0;
+      showBidForm(id, min);
+    }
+    return;
+  }
+  // Buyout: confirma e dispara
+  const buyBtn = e.target.closest('.auction-action-buyout');
+  if (buyBtn) {
+    const id = parseInt(buyBtn.dataset.auctionId, 10);
+    if (!Number.isFinite(id)) return;
+    const l = lastAuctionData?.listings.find((x) => x.auctionId === id);
+    const priceLabel = l
+      ? `${fmtNum(l.buyoutGold)}g${l.buyoutRubies ? ` + ${fmtNum(l.buyoutRubies)}r` : ''}`
+      : '';
+    if (!confirm(`Comprar agora?\n${l?.name || `auction ${id}`}\nPreço: ${priceLabel}`)) return;
+    doPlaceBid(id, { buyout: true });
+    return;
+  }
+  // Confirma o bid (form inline)
+  const confirmBtn = e.target.closest('.auction-bid-confirm');
+  if (confirmBtn) {
+    const id = parseInt(confirmBtn.dataset.confirm, 10);
+    if (!Number.isFinite(id)) return;
+    const input = els.auctionRows.querySelector(`[data-bid-input="${id}"]`);
+    const value = input ? parseInt(input.value, 10) : NaN;
+    if (!Number.isFinite(value) || value <= 0) {
+      setBidStatus(id, 'valor inválido', 'error');
+      return;
+    }
+    doPlaceBid(id, { buyout: false, bidAmount: value });
+    return;
+  }
+  // Cancela o form inline
+  const cancelBtn = e.target.closest('.auction-bid-cancel');
+  if (cancelBtn) {
+    const id = parseInt(cancelBtn.dataset.cancel, 10);
+    if (Number.isFinite(id)) restoreBidActions(id);
+    return;
+  }
+  // Expand
   const btn = e.target.closest('.auction-expand');
   if (!btn) return;
   const id = parseInt(btn.dataset.toggle, 10);
@@ -555,6 +802,14 @@ els.btnRefreshAuction.addEventListener('click', refreshAuction);
 );
 els.aucOnlyUpgrades.addEventListener('change', () => {
   aucOnlyUpgrades = els.aucOnlyUpgrades.checked;
+  if (lastAuctionData) renderAuction(lastAuctionData);
+});
+els.aucOnlyWithBids.addEventListener('change', () => {
+  aucOnlyWithBids = els.aucOnlyWithBids.checked;
+  if (lastAuctionData) renderAuction(lastAuctionData);
+});
+els.aucOnlyMyBids.addEventListener('change', () => {
+  aucOnlyMyBids = els.aucOnlyMyBids.checked;
   if (lastAuctionData) renderAuction(lastAuctionData);
 });
 els.aucQry.addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshAuction(); });
@@ -712,14 +967,38 @@ function showCharTab(tab) {
 els.charTabs.forEach((t) => t.addEventListener('click', () => showCharTab(t.dataset.tab)));
 
 const SLOT_ORDER = ['helmet', 'weapon', 'offhand', 'armor', 'pants', 'boots', 'amulet', 'ring1', 'ring2'];
-const QUALITY_COLORS = { 0: '#7CFC00', 1: '#5159F7', 2: '#9B30FF' };
+const SLOT_SHORT_LABEL = {
+  helmet: 'Capacete', weapon: 'Arma', offhand: 'Off-hand', armor: 'Armadura',
+  pants: 'Calças', boots: 'Sapatos', amulet: 'Amuleto', ring1: 'Anel 1', ring2: 'Anel 2',
+};
 
-function fmtItem(it) {
-  if (!it || it.empty) return `<span class="merc-slot-empty">vazio</span>`;
-  const color = QUALITY_COLORS[it.quality] || '#DDD';
-  const name = escapeHtml(it.name || '?');
-  const lvl = it.level ? ` <span class="muted">lvl ${it.level}</span>` : '';
-  return `<span style="color:${color}">${name}</span>${lvl}`;
+function renderMercSlot(it, slot, charLevel) {
+  const lbl = SLOT_SHORT_LABEL[slot] || slot;
+  if (!it || it.empty) {
+    return `
+      <div class="merc-slot-line is-empty">
+        <span class="merc-slot-q empty"></span>
+        <span class="merc-slot-name">${lbl}</span>
+        <span class="merc-slot-val muted">vazio</span>
+        <span class="merc-slot-lvl"></span>
+        <span class="merc-slot-delta"></span>
+      </div>`;
+  }
+  const qClass = it.quality !== null && it.quality !== undefined ? `q${it.quality}` : 'q-none';
+  const lvlDelta = charLevel != null && it.level != null ? it.level - charLevel : null;
+  const deltaClass = lvlDelta == null ? ''
+    : lvlDelta <= -10 ? 'is-bad'
+    : lvlDelta <= -5 ? 'is-warn'
+    : 'is-ok';
+  const deltaText = lvlDelta == null ? '' : (lvlDelta >= 0 ? `+${lvlDelta}` : `${lvlDelta}`);
+  return `
+    <div class="merc-slot-line">
+      <span class="merc-slot-q ${qClass}" title="${it.quality === 0 ? 'verde' : it.quality === 1 ? 'azul' : it.quality === 2 ? 'roxo' : 'sem cor'}"></span>
+      <span class="merc-slot-name muted">${lbl}</span>
+      <span class="merc-slot-val" title="${escapeHtml(it.name || '')}">${escapeHtml(it.name || '?')}</span>
+      <span class="merc-slot-lvl">L${it.level ?? '?'}</span>
+      <span class="merc-slot-delta ${deltaClass}">${deltaText}</span>
+    </div>`;
 }
 
 function renderMercs(chars) {
@@ -732,25 +1011,32 @@ function renderMercs(chars) {
     const hpText = c.hp ? `${fmtNum(c.hp.value)} / ${fmtNum(c.hp.max)}` : `${c.hpPercent ?? '?'}%`;
     const statsHtml = STAT_KEYS.map((k) => {
       const s = c.stats?.[k];
-      if (!s) return '';
-      return `<div class="merc-stat"><span class="merc-stat-lbl">${STAT_LABELS[k].slice(0, 3)}</span><span class="merc-stat-val">${s.total ?? '?'}</span></div>`;
+      const totalStr = s?.total ?? '?';
+      const maxStr = s?.max ?? '?';
+      const pct = s && s.max > 0 ? Math.min(100, (s.total / s.max) * 100) : 0;
+      const lbl = STAT_LABELS[k].slice(0, 3);
+      return `
+        <div class="merc-stat" title="${STAT_LABELS[k]}: ${totalStr} / ${maxStr}">
+          <span class="merc-stat-lbl">${lbl}</span>
+          <span class="merc-stat-val">${totalStr}</span>
+          <span class="merc-stat-bar"><span class="merc-stat-fill" style="width:${pct.toFixed(0)}%"></span></span>
+        </div>`;
     }).join('');
     const equippedByslot = {};
     for (const it of c.equipped || []) equippedByslot[it.slot] = it;
-    const eqHtml = SLOT_ORDER.map((slot) => {
-      const it = equippedByslot[slot];
-      const lbl = it?.label || slot;
-      return `<div class="merc-slot-row"><span class="merc-slot-lbl">${escapeHtml(lbl)}</span><span class="merc-slot-val">${fmtItem(it)}</span></div>`;
-    }).join('');
+    const eqHtml = SLOT_ORDER.map((slot) => renderMercSlot(equippedByslot[slot], slot, c.level)).join('');
     return `
       <div class="merc-card">
         <div class="merc-card-head">
           <div class="merc-doll">d${c.doll}</div>
           <div class="merc-meta">
-            <div class="merc-name">${escapeHtml(c.name || '?')}</div>
-            <div class="merc-role muted">${escapeHtml(c.role || '?')} · lvl ${c.level ?? '?'}</div>
+            <div class="merc-name">${escapeHtml(c.name || '?')} <span class="merc-card-lvl">L${c.level ?? '?'}</span></div>
+            <div class="merc-role muted">${escapeHtml(c.role || '?')}</div>
           </div>
-          <div class="merc-armor muted" title="Armadura · Dano">${fmtNum(c.armor || 0)} ⛨ · ${escapeHtml(c.damage || '—')}</div>
+          <div class="merc-combat" title="Armadura · Dano">
+            <span class="merc-combat-armor">${fmtNum(c.armor || 0)} ⛨</span>
+            <span class="merc-combat-dmg">${escapeHtml(c.damage || '—')}</span>
+          </div>
         </div>
         <div class="merc-hp">
           <div class="merc-hp-track"><div class="bar-fill bar-hp" style="width:${hpPct.toFixed(1)}%"></div></div>
@@ -775,6 +1061,216 @@ async function refreshChars() {
   }
 }
 els.btnRefreshChars.addEventListener('click', refreshChars);
+
+// ─── Sugestões Mercs (Painel 3) ───
+const SLOT_LABEL_SHORT = {
+  helmet: 'Capacete', weapon: 'Arma', offhand: 'Off-hand', armor: 'Armadura',
+  ring1: 'Anel 1', ring2: 'Anel 2', pants: 'Calças', boots: 'Sapatos', amulet: 'Amuleto',
+};
+
+function fmtBuyout(c) {
+  const bits = [];
+  if (c.buyoutGold !== null && c.buyoutGold !== undefined) bits.push(`${fmtNum(c.buyoutGold)}<span class="muted">g</span>`);
+  if (c.buyoutRubies) bits.push(`${fmtNum(c.buyoutRubies)}<span class="muted">r</span>`);
+  if (!bits.length && c.minBid !== null && c.minBid !== undefined) bits.push(`<span class="muted">min</span> ${fmtNum(c.minBid)}<span class="muted">g</span>`);
+  return bits.join(' · ') || '—';
+}
+
+const mercExpanded = new Set(); // chave "doll-slot-auctionId" pra preservar estado
+
+function renderCandidateExpanded(c) {
+  if (!c.comparison) {
+    return `<div class="auction-compare-empty muted">
+      sem <code>comparison</code> na resposta — provavelmente o bot precisa ser reiniciado pra carregar <code>src/mercSuggestions.js</code> atualizado.
+    </div>`;
+  }
+  if (!Array.isArray(c.comparison.rows) || c.comparison.rows.length === 0) {
+    return `<div class="auction-compare-empty muted">
+      comparação chegou sem linhas — item provavelmente sem stats parseáveis.
+    </div>`;
+  }
+  return renderCompareTable(c.comparison);
+}
+
+function candidateKey(merc, slot, c) {
+  return `${merc.doll}-${slot}-${c.auctionId}`;
+}
+
+function renderCandidate(merc, slot, c) {
+  const qClass = c.quality !== null ? `auction-q-${c.quality}` : 'auction-q-none';
+  const sum = c.summary;
+  const lvlDelta = sum.lvlDiff ? `lvl <b>${sum.lvlDiff > 0 ? '+' : ''}${sum.lvlDiff}</b>` : '';
+  const score = sum.score >= 0 ? `+${sum.score}` : `${sum.score}`;
+  const ups = `<span class="cand-up" title="${sum.up} stat(s) em que o item é melhor que o equipado (excluindo os no cap)">${sum.up}↑</span>`;
+  const downs = sum.down > 0
+    ? `<span class="cand-down" title="${sum.down} stat(s) em que perde vs equipado (subtrai magnitude × peso do score)">${sum.down}↓</span>`
+    : '';
+  const wasted = sum.wastedUps > 0
+    ? `<span class="cand-cap" title="${sum.wastedUps} stat(s) já no max do merc: ${(sum.atCap || []).join(', ')}">${sum.wastedUps}⌃cap</span>`
+    : '';
+  const top = sum.topAffixBonus > 0
+    ? `<span class="cand-top" title="prefix/suffix top">⭐</span>` : '';
+  const eff = sum.efficiency
+    ? `<span class="cand-eff" title="score por 1k gold equivalente (1r ≈ 1500g)">${sum.efficiency}/k</span>` : '';
+  const sb = c.soulbound
+    ? `<span class="cand-sb" title="soulbound">🔒</span>` : '';
+  const dupBadge = c.dupOf
+    ? `<span class="cand-dup" title="também listado em ${c.dupOf} desse merc">↻ ${c.dupOf}</span>` : '';
+  const bidMark = c.hasBids ? '<span class="cand-bid" title="já tem lance">◆</span>' : '';
+  const key = candidateKey(merc, slot, c);
+  const expanded = mercExpanded.has(key);
+  const dupClass = c.dupOf ? 'is-dup' : '';
+  return `
+    <div class="merc-suggest-candidate ${qClass} ${expanded ? 'is-expanded' : ''} ${dupClass}" data-cand-key="${key}">
+      <button class="merc-suggest-candidate-row" data-toggle="${key}" aria-expanded="${expanded}">
+        <span class="cand-arrow">${expanded ? '▼' : '▶'}</span>
+        <span class="cand-name" title="${escapeHtml(c.name || '')}">${top}${escapeHtml(c.name || c.baseName || '?')} ${sb} ${dupBadge}</span>
+        <span class="cand-meta">
+          <span class="cand-lvl">L${c.level ?? '?'}</span>
+          ${lvlDelta ? `<span class="cand-lvldelta">${lvlDelta}</span>` : ''}
+        </span>
+        <span class="cand-stats">${ups} ${downs} ${wasted}</span>
+        <span class="cand-score" title="score = Σ(peso × roleBoost × Δ) − downs + lvlΔ/5 + topBonus">${score}</span>
+        <span class="cand-buy">${fmtBuyout(c)} ${eff} ${bidMark}</span>
+      </button>
+      <div class="merc-suggest-candidate-detail" ${expanded ? '' : 'hidden'}>${expanded ? renderCandidateExpanded(c) : ''}</div>
+    </div>`;
+}
+
+function renderMercSuggestionsBlock(merc) {
+  const slotsHtml = merc.suggestions.map((s) => {
+    const slotName = SLOT_LABEL_SHORT[s.slot] || s.slot;
+    const currentBits = s.currentName
+      ? `${escapeHtml(s.currentName)} <span class="muted">L${s.currentLevel ?? '?'}</span>`
+      : `<span class="muted">slot vazio</span>`;
+    const slotPriority = s.priority >= 999 ? '<span class="slot-flag empty">VAZIO</span>'
+      : s.priority >= 10 ? '<span class="slot-flag urgent">URGENTE</span>'
+      : '';
+    if (!s.candidates.length) {
+      return `
+        <div class="merc-suggest-slot-row">
+          <div class="merc-suggest-slot-head">
+            <span class="merc-suggest-slot-lbl">${slotName}</span>
+            ${slotPriority}
+            <span class="merc-suggest-slot-current">${currentBits}</span>
+          </div>
+          <div class="merc-suggest-empty-row">sem candidatos no leilão</div>
+        </div>`;
+    }
+    const candHtml = s.candidates.map((c) => renderCandidate(merc, s.slot, c)).join('');
+    return `
+      <div class="merc-suggest-slot-row">
+        <div class="merc-suggest-slot-head">
+          <span class="merc-suggest-slot-lbl">${slotName}</span>
+          ${slotPriority}
+          <span class="merc-suggest-slot-current">${currentBits}</span>
+        </div>
+        <div class="merc-suggest-candidates">${candHtml}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="merc-suggest-block">
+      <div class="merc-suggest-block-head">
+        <span class="merc-doll-pill">d${merc.doll}</span>
+        <span class="merc-name">${escapeHtml(merc.name || `doll ${merc.doll}`)}</span>
+        <span class="muted">L${merc.level ?? '?'}</span>
+        <span class="muted merc-role">${escapeHtml(merc.role || '?')}</span>
+      </div>
+      ${slotsHtml || '<div class="merc-suggest-empty-row">sem slots avaliados</div>'}
+    </div>`;
+}
+
+let lastMercData = null;
+
+function renderMercSuggestions(data) {
+  lastMercData = data;
+  const mercs = data.mercs || [];
+  if (!mercs.length) {
+    els.mercsSuggestBody.innerHTML = '<div class="muted" style="text-align:center;padding:14px">DB sem mercs — atualiza a aba Mercenários primeiro.</div>';
+    els.auctionTimeBucket.textContent = '—';
+    return;
+  }
+  const totalCandidates = mercs.reduce(
+    (n, m) => n + m.suggestions.reduce((nn, s) => nn + s.candidates.length, 0), 0,
+  );
+  const rangeBit = data.range ? ` · L${data.range.min}-${data.range.max}` : '';
+  els.auctionTimeBucket.textContent =
+    `${mercs.length} mercs · ${totalCandidates} candidatos · ${data.listingsCount} listings${rangeBit}`;
+  els.mercsSuggestBody.innerHTML = mercs.map(renderMercSuggestionsBlock).join('');
+}
+
+// Switch entre Listagem ↔ Sugestões Mercs dentro do card Leilão.
+els.auctionViewTabs.querySelectorAll('.auction-view-tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (aucView === btn.dataset.view) return;
+    aucView = btn.dataset.view;
+    mercExpanded.clear();
+    applyAuctionView();
+    refreshAuction();
+  });
+});
+
+if (els.aucMercSlots) {
+  els.aucMercSlots.addEventListener('change', () => {
+    if (aucView === 'mercs') refreshAuction();
+  });
+}
+if (els.btnRefreshMercsStats) {
+  els.btnRefreshMercsStats.addEventListener('click', () => {
+    pendingRefreshStats = true;
+    if (aucView !== 'mercs') {
+      aucView = 'mercs';
+      applyAuctionView();
+    }
+    refreshAuction();
+  });
+}
+if (els.btnAuctionLegend && els.auctionLegend) {
+  els.btnAuctionLegend.addEventListener('click', () => {
+    els.auctionLegend.hidden = !els.auctionLegend.hidden;
+    els.btnAuctionLegend.classList.toggle('is-active', !els.auctionLegend.hidden);
+  });
+}
+
+// Click no botão do candidato: alterna expansão inline (mostra tabela cmp).
+els.mercsSuggestBody.addEventListener('click', (e) => {
+  const btn = e.target.closest('.merc-suggest-candidate-row');
+  if (!btn) return;
+  const key = btn.dataset.toggle;
+  if (!key) return;
+  const wrapper = btn.closest('.merc-suggest-candidate');
+  const detail = wrapper.querySelector('.merc-suggest-candidate-detail');
+  const arrow = btn.querySelector('.cand-arrow');
+  if (mercExpanded.has(key)) {
+    mercExpanded.delete(key);
+    wrapper.classList.remove('is-expanded');
+    btn.setAttribute('aria-expanded', 'false');
+    if (arrow) arrow.textContent = '▶';
+    detail.hidden = true;
+    detail.innerHTML = '';
+  } else {
+    mercExpanded.add(key);
+    wrapper.classList.add('is-expanded');
+    btn.setAttribute('aria-expanded', 'true');
+    if (arrow) arrow.textContent = '▼';
+    if (lastMercData) {
+      const [dollStr, slot, auctionIdStr] = key.split('-');
+      const doll = parseInt(dollStr, 10);
+      const auctionId = parseInt(auctionIdStr, 10);
+      const merc = lastMercData.mercs.find((m) => m.doll === doll);
+      const slotData = merc?.suggestions.find((s) => s.slot === slot);
+      const cand = slotData?.candidates.find((c) => c.auctionId === auctionId);
+      if (cand) {
+        detail.innerHTML = renderCandidateExpanded(cand);
+      } else {
+        detail.innerHTML = `<div class="auction-compare-empty muted">candidato não encontrado em lastMercData (doll=${doll} slot=${slot} auctionId=${auctionId})</div>`;
+      }
+    } else {
+      detail.innerHTML = '<div class="auction-compare-empty muted">lastMercData ainda não foi carregado — clique em ⟳</div>';
+    }
+    detail.hidden = false;
+  }
+});
 els.logLevel.addEventListener('change', () => {
   els.logBox.innerHTML = '';
   lastLogTs = 0;
@@ -814,3 +1310,7 @@ poll();
 setInterval(poll, REFRESH_MS);
 // Lazy-load training on first paint so the section isn't empty
 setTimeout(refreshTraining, 1500);
+// Popular o select de level do leilão com base no level do char (uma vez).
+setTimeout(ensureAuctionLevelOptions, 800);
+// Aplicar visibilidade inicial de filtros conforme view (default = listing).
+applyAuctionView();

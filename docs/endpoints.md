@@ -306,6 +306,10 @@ qry=<echo>&itemType=<echo>&itemLevel=<echo>&itemQuality=<echo>   # ecoam o filtr
 
 `rubyAmount=60` aparece fixo no action — provavelmente preço de boost do server. Cada `<form>` da listagem já vem com hidden inputs montados; basta clonar e setar `bid_amount`/`buyouthd`.
 
+**Plugado via UI (2026-04-29):** `actions/auction.placeBid(client, {auctionId, ttype, buyout, bidAmount, rubyAmount, filterEcho})` reusa `client.postForm`. Gated por `isActionsEnabled()`. Endpoint UI: `POST /api/auction/bid` aceita JSON com mesmos campos. Após sucesso, marca `auctionId` em `botState.myBidAuctionIds` (Set in-memory) — usado pelo parser pra reforçar `listing.myBid` na próxima listagem. Ver DEC-21.
+
+**`ttype` por listing (`formTtype`):** parser captura `?ttype=N` do `<form action>` de cada listing. Frontend usa esse valor (e não o da aba) ao montar o POST. Aba mercenário usa URL `?ttype=3`, mas os forms internos vêm com `ttype=2` — divergência confirmada no sample (linha 826 de leilao1.html).
+
 ### Schema de cada listing (parsing de DOM)
 
 Por anúncio (1 form):
@@ -323,10 +327,28 @@ Por anúncio (1 form):
 - **preço inicial**: 2ª `<div>` em `auction_bid_div` (`Preço baixo: X.XXX`)
 - **buyout em ouro / rubis**: números soltos antes de `<img title="Ouro">` e `<img title="Rubis">` na parte de buyout
 
+### Marcação de lance ativo (validado 2026-04-29)
+
+Sample real em `docs/wip/auction/leilao-after-bid.html` (item `auctionForm6816306` após bid de 208g):
+
+```html
+<div class="auction_bid_div">
+  <div>
+    <a href="index.php?mod=player&p=17883&sh=...">
+      <span style="color:blue;font-weight:bold;">AidsEgipicia</span>
+    </a>
+  </div>
+  <div>Preço baixo : 219 <img title="Ouro"></div>
+  <input name="bid_amount" value="219"/>
+  ...
+</div>
+```
+
+Parser captura `bidderName` via regex sobre `<a mod=player>...<span>NOME</span></a>`. `myBid` é setado em `actions/auction.enrichResult` comparando `bidderName` (case-insensitive) com `snapshot.charName`. **Valor exato do lance corrente NÃO é exposto** — o "Preço baixo" pós-bid é o `nextMinBid` (~5% acima do lance atual).
+
 ### Pendências de captura — leilão
 
-- [ ] Confirmar `ttype` semantics (1 vs 2 vs 3)
-- [ ] Marker "seu lance" — capturar página em estado pós-bid
+- [ ] Confirmar `ttype` semantics (1 vs 2 vs 3) — parser já usa `formTtype` por listing, mitiga
 - [ ] Estrutura/paginação real da aba "Tudo" sem filtro
 - [ ] Validar se filtro `itemType=0` retorna mais que 5 entries
 

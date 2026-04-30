@@ -481,10 +481,17 @@ export function parseAuctionList(html) {
   );
 
   // Listings: cada <form id="auctionFormN">...</form>
-  const formRe = /<form[^>]*\bid="auctionForm(\d+)"[^>]*>([\s\S]*?)<\/form>/g;
+  const formRe = /<form([^>]*)\bid="auctionForm(\d+)"[^>]*>([\s\S]*?)<\/form>/g;
   for (const fm of html.matchAll(formRe)) {
-    const auctionId = parseInt(fm[1], 10);
-    const formHtml = fm[2];
+    const formAttrs = fm[1] || '';
+    const auctionId = parseInt(fm[2], 10);
+    const formHtml = fm[3];
+
+    // Extrai o ttype do action= (ex: ?mod=auction&submod=placeBid&ttype=2&...).
+    // O bid POST precisa usar esse mesmo ttype — mesmo na aba "Mercenário" os
+    // forms vêm com ttype=2, não 3 (semântica ainda ambígua, ver endpoints.md).
+    const ttypeMatch = formAttrs.match(/[?&]ttype=(\d+)/);
+    const formTtype = ttypeMatch ? parseInt(ttypeMatch[1], 10) : null;
 
     const itemTagMatch = formHtml.match(/<div\b([^>]*\bdata-tooltip=[^>]*)>/);
     if (!itemTagMatch) continue;
@@ -512,8 +519,23 @@ export function parseAuctionList(html) {
     const bidDivMatch = formHtml.match(/<div\s+class="auction_bid_div"[\s\S]*$/);
     const bidDivHtml = bidDivMatch ? bidDivMatch[0] : '';
 
-    const hasBids = bidDivHtml.length > 0 && !/Não existem licitações/i.test(bidDivHtml);
+    // Quando há lance, o jogo NÃO mostra a string "Não existem licitações" — em
+    // vez disso renderiza o nome do licitador atual com link pro profile:
+    //   <a href="?mod=player&p=ID..."><span style="color:blue;font-weight:bold;">NOME</span></a>
+    // (validado em produção 2026-04-29 com sample real após dar lance).
+    // O VALOR EXATO do lance atual NÃO é exposto — o "Preço baixo" mostrado
+    // após o bid é o próximo mínimo (~5% acima do lance corrente), e o
+    // input bid_amount também tem esse valor pré-preenchido.
+    const bidderMatch = bidDivHtml.match(
+      /<a\s+href="[^"]*\bmod=player\b[^"]*"[^>]*>\s*<span[^>]*>([^<]+)<\/span>\s*<\/a>/i
+    );
+    const bidderName = bidderMatch ? bidderMatch[1].trim() : null;
+    const hasBids = !!bidderName
+      || (bidDivHtml.length > 0 && !/Não existem licitações/i.test(bidDivHtml));
     const minBid = toInt(rxOne(formHtml, /<input[^>]*name="bid_amount"[^>]*value="(\d+)"/));
+    // myBid é resolvido em actions/auction.js (precisa do charName do snapshot
+    // pra comparar com bidderName). Aqui o parser só expõe o nome cru.
+    const myBid = false;
     // O bidDivHtml tem dois preços em ouro: "Preço baixo: X" (lance mínimo) e
     // o buyout depois do <input name="buyout">. Isolar a seção de buyout.
     // Whitespace pode ser literal `&nbsp;` (não match em \s).
@@ -531,6 +553,7 @@ export function parseAuctionList(html) {
 
     result.listings.push({
       auctionId,
+      formTtype,
       itemTypeId: getInt('data-content-type'),
       itemType,
       itemSubtype,
@@ -547,6 +570,9 @@ export function parseAuctionList(html) {
       prefix: nameParts.prefix,
       suffix: nameParts.suffix,
       hasBids,
+      bidderName,
+      myBid,
+      nextMinBid: minBid, // o "Preço baixo" pós-lance é o próximo mínimo, não o lance atual
       minBid,
       buyoutGold,
       buyoutRubies,

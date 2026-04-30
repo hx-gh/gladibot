@@ -23,6 +23,8 @@ const botState = {
     tickNowRequested: false, // UI sets, sleep loop consumes
   },
   logs: [],                  // ring buffer of { ts, level, msg }
+  myBidAuctionIds: new Set(), // IDs onde demos lance via UI nessa sessão.
+                              // Complementa o parser (sem sample pós-bid real).
 };
 
 export function getStateView() {
@@ -109,6 +111,16 @@ export function pushLog(level, msg) {
   if (botState.logs.length > RING_MAX) {
     botState.logs.splice(0, botState.logs.length - RING_MAX);
   }
+}
+
+export function markMyBid(auctionId) {
+  if (auctionId !== null && auctionId !== undefined) {
+    botState.myBidAuctionIds.add(Number(auctionId));
+  }
+}
+
+export function getMyBidIds() {
+  return botState.myBidAuctionIds;
 }
 
 export function getLogs({ since = 0, level } = {}) {

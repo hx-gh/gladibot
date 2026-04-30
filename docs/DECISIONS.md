@@ -250,6 +250,91 @@ DB file em `data/state.db` (gitignored, junto com `state.db-wal`/`-shm`/`-journa
 
 ---
 
+### [DEC-20] Recomendador v2: score magnitude-weighted + role boost + waste check unificado
+
+**Data:** 2026-04-29
+**Contexto:** Recomendador v1 (DEC-19) usava `score = (ups − downs) + lvlDiff/5` — count puro de stats up. Problemas observados rodando contra dados reais:
+1. `+21 Força` e `+5 Força` valiam o mesmo `+1 up`. Magnitude perdida.
+2. Mercs com stats no cap (Asa de águia: Força 217/217, Const 310/310) recebiam itens cujo benefício era totalmente clamped — flag `wasted` existia mas só ativava em alguns paths.
+3. Char principal (Painel 2) NÃO tinha waste check — listings cheias de upgrades "no papel" pra stats já cap.
+4. Sem peso por role: +Força num Mestre Druida (caster) pontuava igual a +Força num Escorpião guerreiro (DPS).
+5. Sem `cost-effectiveness`: candidatos com score similar mas preços muito diferentes apareciam na ordem errada.
+6. Filter `itemLevelMin = char.level − 6` escondia upgrades baratos pra mercs com gear muito atrasado (ex: anel L21 num char L57 — candidato L43 era descartado).
+7. `pickRingBaseline` colapsava ring1+ring2 num único baseline → ambos os slots mostravam sugestões idênticas.
+
+**Decisão:** Refatoração completa do score em `src/mercSuggestions.js` + módulo compartilhado com Painel 2:
+- **Score weighted**: `Σ (statWeight × roleBoost × Δabs) − Σ(downs ponderados) + lvlDiff/5 + topAffixBonus`. Wasted rows não contribuem.
+- **`STAT_VALUE_WEIGHT`** por categoria (str/dex/.../dano/saúde/cr/etc): pesos calibrados pra +1 attribute principal valer ~20× +1 saúde.
+- **`roleStatBoost(charStats, prefix)`** via `itemsMax`: stat com cap de items alto = vocação do char (peso 1.6); cap baixo = irrelevante (peso 0.25). Substitui hardcoding de roles por heurística baseada no que o jogo já tem.
+- **`enrichListingWithWaste(listing, charStats)`**: helper exposto pra `auction.js` aplicar mesma lógica no Painel 2.
+- **Cost effectiveness**: `efficiency = score / (gold + ruby × 1500) × 1000`. Tiebreaker quando score ~ igual.
+- **`itemLevelMin`** permissivo: `max(currentSlotLevel + 5, charLevel − 14)` — cobre upgrades baratos pra slots muito atrasados.
+- **Baseline = slot atual** (sem `pickRingBaseline`). Cada anel compara contra seu próprio equipado. Dedup é responsabilidade do server: candidato em ring1 + ring2 do mesmo merc ganha `dupOf: 'ring1'` no segundo slot, UI marca com classe `is-dup` (opacity reduzida).
+- **Top affix bonus**: +1 score por prefix top, +1 por suffix top (do `data/affixes.json`).
+- **`?slots=N`** + **`?refresh=1`** no endpoint pra UX (slots configurável, force fetchAllCharacters).
+- **`soulbound`** exposto no candidato (badge UI).
+
+**Alternativas rejeitadas:**
+- *Hardcoding de roles ("Druida → +INT")*: frágil — strings PT-BR específicas do servidor, mercs novos requerem update do code. `itemsMax` é dado próprio do jogo, sem hardcoding.
+- *Score multiplicativo (efficiency como score primário)*: itens caríssimos com score brutal ficavam invisíveis. User pode pagar quando vale, então score primário e efficiency só desempata.
+- *RUBY_TO_GOLD dinâmico via mercado*: 1500g/r é estimativa empírica. Vira ajuste futuro se virar problema.
+
+**Consequências:**
+- Score muda de magnitude (12-15 → 30-80 típico). UI mostra direto sem normalizar.
+- Painel 2 e Painel 3 agora compartilham a mesma lógica de comparação/ranking via `enrichListingWithWaste`.
+- Wasted ups, atCap, topBonus, efficiency e soulbound expostos consistentemente em ambos.
+- DB stats stale mitigado por `?refresh=1` + botão UI "↻ stats".
+- `wastedUps` no Painel 2 aparece como `auction-cap-chip` no footer do listing.
+
+---
+
+### [DEC-19] Recomendador de upgrade dos mercs faz comparação local (DB), não re-fetch
+
+**Data:** 2026-04-29
+**Contexto:** O tooltip duplo do leilão entrega `[item, equipped]`, mas o "equipped" lá é sempre do char ativo (gladiador principal, doll=1). Pra recomendar upgrade pros 4 mercs (dolls 2..6), precisaríamos de uma fonte alternativa do gear equipado. Caminho ingênuo: trocar o doll ativo via `?doll=N` antes de cada `mod=auction` request. Pior cenário: 4 mercs × M slots = N round-trips HTTP por refresh, bloqueando o tick principal.
+**Decisão:** Fazer **1 fetch único** do leilão (com `itemType=0`, sem filtro de slot) e **comparar localmente** contra o gear do merc lido do SQLite (`equipped_items.stats_json`). Helper novo `readEquippedBlock(doll, slot)` em `db.js` reconstrói o shape `{name, level, stats}` que `pairStats` espera. Módulo `src/mercSuggestions.js` orquestra: `rankSlots(char)` prioriza slots por gap de level + quality penalty, `buildSuggestions(allListings, mercs)` filtra candidatos por `itemType` localmente e pareia stats reusando `pairStats`/`summarizeRows` (mesmas regras do Painel 2).
+**Alternativas rejeitadas:**
+- *Trocar doll ativo antes de cada GET*: O(N) round-trips, race com tick (`mod=overview` parser), e expõe o usuário a dolls "fantasma" se o servidor demorar a aplicar a troca.
+- *Fetch por slot (1 fetch/itemType × N mercs)*: ainda muitos round-trips, e o filtro do leilão já entrega tudo em "Tudo".
+- *Re-parsear o paperdoll de cada merc no fly*: mesmo problema do anterior, e o `equipped_items` já é populado pelo `/api/characters` (Painel 4) — re-aproveitar é grátis.
+**Consequências:**
+- Painel 3 depende do DB estar populado. Se vazio na primeira chamada, o endpoint faz `fetchAllCharacters` inline e persiste — first-load lento, depois rápido.
+- Anéis (ring1/ring2) compartilham `itemType=6`. `pickRingBaseline()` escolhe o anel mais fraco como baseline pra evitar que candidatos que upgrade-iam o anel fraco apareçam como downgrade do forte.
+- Stale data: gear do merc no DB pode estar desatualizado se o user equipou algo manualmente entre refreshs. Não é crítico — atualiza no próximo refresh do Painel 4. Documentar como limitação aceita.
+
+---
+
+### [DEC-21] Bid via UI manual + parser de `bidderName` + tracking local de IDs
+
+**Data:** 2026-04-29
+**Contexto:** Para chegar à Fase 2 do Painel 2 (sniper + autobuy automático) precisávamos primeiro validar que o `placeBid` funciona end-to-end e dar ao usuário visibilidade dos lances que ele já mandou. `placeBid` em `actions/auction.js` existia gated mas sem caller.
+
+Sub-problemas resolvidos nesta sessão:
+1. **Detectar "MEU lance" na listagem**: capturado HTML real pós-bid (`docs/wip/auction/leilao-after-bid.html`). Servidor renderiza `<a href="?mod=player&p=ID"><span style="color:blue;font-weight:bold;">NOME_LICITADOR</span></a>` no `auction_bid_div` em vez de string fixa. Não há "Seu lance"; é o nome do licitador atual.
+2. **`currentBid` exato não é exposto**: o "Preço baixo: X" pós-bid é o **próximo mínimo** (~5% acima do lance corrente), não o lance atual. Mesmo o input `bid_amount` vem com esse valor.
+3. **`ttype` ambíguo**: aba "Mercenário" usa URL `?ttype=3`, mas os `<form action>` internos vêm com `ttype=2`.
+
+**Decisão:** 
+- **Bid 100% manual via UI** (botões "Lance" e "Comprar" por card). `placeBid` plugado via `POST /api/auction/bid` gated por `isActionsEnabled()`. Orchestrator nunca chama `placeBid` automaticamente nessa fase.
+- **Parser captura `bidderName` cru** (regex sobre `<a mod=player>...<span>NOME</span>`). `enrichResult` em `actions/auction.js` compara case-insensitive com `charName` do snapshot pra setar `myBid`. Separação parsing × business logic.
+- **Tracking local** em `botState.myBidAuctionIds` (Set in-memory, volátil): ao dar lance via UI, o ID é marcado. Cobre edge case (parser falhou ou caracteres especiais no nome divergem).
+- **`formTtype` capturado do `<form action>`**: parser extrai `?ttype=N` do action attribute. Frontend usa esse valor (não o da aba) ao montar o POST de bid — fonte de verdade que o próprio jogo gerou.
+- **`nextMinBid`** explícito no schema (próximo lance mínimo). `currentBid` (valor exato) **não é coletado** — não está no HTML. UI mostra "próximo mínimo: Xg" no tooltip.
+
+**Alternativas rejeitadas:**
+- *Auto-bid já agora*: muito risco — sem sniper validado, sem regras.
+- *Persistir `myBidAuctionIds` em SQLite*: volátil é OK; leilão renova, IDs antigos não importam após N horas.
+- *Inferir `currentBid` a partir de `nextMinBid / 1.05`*: aproximação imprecisa; melhor não expor valor falso.
+- *Usar `ttype` da aba*: risco de POST falhar quando aba ≠ ttype interno.
+
+**Consequências:**
+- Fase 2 destravada: usuário pode dar lance/comprar pela UI, ver feedback visual (chip ★ "MEU LANCE" ou ◆ NOME_OUTRO_PLAYER), filtros "só com lances" / "só meus lances".
+- Validado em produção: lance de 208g em `auctionId=6816306` (Maçã Poirins, L55) → server retornou `bidderName=AidsEgipicia`, `nextMinBid=219`, `hasBids=true`. Sample salvo em `docs/wip/auction/leilao-after-bid.html`.
+- Reset do tracking ao reiniciar bot — aceitável (parser via `bidderName` cobre 99% dos casos; tracking só pra edge cases).
+- DEBT-09 fechado nessa sessão.
+
+---
+
 ### [DEC-04] Documentação espelhando o sistema do webservices-core
 
 **Data:** 2026-04-28

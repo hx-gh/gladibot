@@ -11,17 +11,24 @@
 
 // Mapeamento da primeira parte de `data-basis` (ex: "1-12") pra label de
 // categoria. Bate com o select de filtro do leilão (ver leilao1-analysis.md).
+// itemType vem da primeira parte de `data-basis` do listing/paperdoll.
+// Mapeamento confirmado empiricamente em 2026-04-29 inspecionando o leilão real:
+// type=5 cobre bracers/luvas/proteção de antebraço (slot `pants` do paperdoll
+// — apesar do label "Pants" no schema interno, o jogo PT-BR chama "Alça" e
+// inclui peças como "Luvas de cobre", "Braceletes de ferro", "Protetor de
+// cobre"). type=11 é CONSUMÍVEL (Frasco, Falcão, Ampulheta), type=7 é CURA
+// (Maçã, Poção), type=12 é MELHORIAS (Pó).
 export const ITEM_CATEGORY_LABEL = {
   1: 'Arma',
   2: 'Escudo',
   3: 'Armadura',
   4: 'Capacete',
-  5: 'Luvas',
+  5: 'Alça',
   6: 'Anel',
   7: 'Cura',
   8: 'Sapatos',
   9: 'Amuleto',
-  11: 'Alça',
+  11: 'Consumível',
   12: 'Melhoria',
   15: 'Mercenário',
 };
@@ -75,6 +82,18 @@ export function deltaSign(delta) {
   return v > 0 ? 1 : v < 0 ? -1 : 0;
 }
 
+// Magnitude numérica do delta string entregue pelo jogo. Pra valores
+// percentuais como "+3% (+3)" pega o absoluto entre parênteses; pra "+121"
+// pega direto; pra ranges "+10 - 13" usa o primeiro número.
+export function deltaValue(delta) {
+  if (!delta) return 0;
+  const s = String(delta).trim();
+  const pctAbs = s.match(/\(([+-]?\d+)\)/);
+  if (pctAbs) return parseInt(pctAbs[1], 10);
+  const m = s.match(/[+-]?\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
 function signFromValues(itemValue, equippedValue) {
   const diff = (itemValue ?? 0) - (equippedValue ?? 0);
   return diff > 0 ? 1 : diff < 0 ? -1 : 0;
@@ -114,7 +133,12 @@ function capitalize(s) {
 // componentes no label entre parênteses pra não perder informação. Stats
 // fora de `CONSOLIDATABLE_STATS` (Dano range, Armadura, Saúde, etc.) passam
 // direto sem mudança.
-function consolidateMainStats(rows) {
+//
+// `opts.useGameDelta`: se true, soma os `deltaNum` dos componentes (delta
+// canônico do jogo, total do char) em vez de calcular itemTotal-equippedTotal
+// (math direta entre values, errada quando values são totais do char).
+function consolidateMainStats(rows, opts = {}) {
+  const useGameDelta = !!opts.useGameDelta;
   const buckets = new Map();
   const passthrough = [];
   for (const r of rows) {
@@ -137,6 +161,8 @@ function consolidateMainStats(rows) {
     }
     let itemTotal = null;
     let equippedTotal = null;
+    let deltaSum = 0;
+    let deltaPresent = false;
     const itemParts = [];
     const equippedParts = [];
     for (const r of group) {
@@ -150,6 +176,10 @@ function consolidateMainStats(rows) {
         const tk = extractValueToken(r.equippedLabel);
         if (tk) equippedParts.push(tk);
       }
+      if (useGameDelta && r.deltaNum != null) {
+        deltaSum += r.deltaNum;
+        deltaPresent = true;
+      }
     }
     const cap = capitalize(prefix);
     const fmtTotal = (n, parts) => {
@@ -159,18 +189,27 @@ function consolidateMainStats(rows) {
     };
     const itemLabel = itemTotal !== null ? fmtTotal(itemTotal, itemParts) : null;
     const equippedLabel = equippedTotal !== null ? fmtTotal(equippedTotal, equippedParts) : null;
-    let delta = null;
-    if (itemTotal !== null && equippedTotal !== null) delta = itemTotal - equippedTotal;
-    else if (itemTotal !== null) delta = itemTotal;
-    else if (equippedTotal !== null) delta = -equippedTotal;
-    const sign = delta == null ? 0 : delta > 0 ? 1 : delta < 0 ? -1 : 0;
+    let deltaNum;
+    if (deltaPresent) {
+      deltaNum = deltaSum;
+    } else if (itemTotal !== null && equippedTotal !== null) {
+      deltaNum = itemTotal - equippedTotal;
+    } else if (itemTotal !== null) {
+      deltaNum = itemTotal;
+    } else if (equippedTotal !== null) {
+      deltaNum = -equippedTotal;
+    } else {
+      deltaNum = 0;
+    }
+    const sign = deltaNum > 0 ? 1 : deltaNum < 0 ? -1 : 0;
     consolidated.push({
       key: prefix,
       itemLabel,
       itemValue: itemTotal,
       equippedLabel,
       equippedValue: equippedTotal,
-      deltaLabel: delta == null ? null : `${delta >= 0 ? '+' : ''}${delta}`,
+      deltaLabel: `${deltaNum >= 0 ? '+' : ''}${deltaNum}`,
+      deltaNum,
       sign,
       consolidated: true,
     });
@@ -179,11 +218,21 @@ function consolidateMainStats(rows) {
 }
 
 // Pareia stats do item leiloado × stats do equipado por chave canônica.
-// Saída: array de linhas `{ key, itemLabel, itemValue, equippedLabel,
-// equippedValue, deltaLabel, sign }`. Stats que só existem em um dos lados
-// aparecem com `null` no outro. Stats principais flat+% saem em linha única
-// (ver `consolidateMainStats`).
-export function pairStats(itemBlock, equippedBlock) {
+//
+// `opts.useGameDelta`: quando true, usa o `eq.delta` (delta canônico do jogo
+// no tooltip duplo do leilão = mudança no total do char). Pro Painel 2 isso
+// é correto, porque os values do equipped block são TOTAIS do char (não do
+// slot sozinho), então math direta `item−equipped` daria valores absurdos.
+//
+// Quando false (default), usa math direta `itemValue − equippedValue`. Pro
+// Painel 3 (mercs lendo do paperdoll do DB) isso é correto, porque values
+// são individuais do item equipado e não há delta do jogo (delta=null sempre).
+//
+// Saída: rows `{ key, itemLabel, itemValue, equippedLabel, equippedValue,
+// deltaLabel, deltaNum, sign }`. `deltaNum` é a magnitude numérica usada
+// pelo score weighted; `deltaLabel` é o string pra UI exibir.
+export function pairStats(itemBlock, equippedBlock, opts = {}) {
+  const useGameDelta = !!opts.useGameDelta;
   const itemStats = annotate(itemBlock?.stats);
   const equippedStats = annotate(equippedBlock?.stats);
 
@@ -199,9 +248,21 @@ export function pairStats(itemBlock, equippedBlock) {
     const eq = eqIdx !== -1 ? equippedStats[eqIdx] : null;
     if (eq) used.add(eqIdx);
 
-    const sign = s.delta != null
-      ? deltaSign(s.delta)
-      : signFromValues(s.value, eq?.value ?? 0);
+    let deltaLabel = null;
+    let deltaNum;
+    let sign;
+    if (useGameDelta && eq?.delta) {
+      deltaLabel = eq.delta;
+      deltaNum = deltaValue(eq.delta);
+      sign = deltaSign(eq.delta);
+    } else if (s.delta) {
+      deltaLabel = s.delta;
+      deltaNum = deltaValue(s.delta);
+      sign = deltaSign(s.delta);
+    } else {
+      deltaNum = (s.value ?? 0) - (eq?.value ?? 0);
+      sign = signFromValues(s.value, eq?.value ?? 0);
+    }
 
     rows.push({
       key: s.key,
@@ -209,7 +270,8 @@ export function pairStats(itemBlock, equippedBlock) {
       itemValue: s.value,
       equippedLabel: eq ? eq.label : null,
       equippedValue: eq ? eq.value : null,
-      deltaLabel: s.delta || null,
+      deltaLabel,
+      deltaNum,
       sign,
     });
   }
@@ -217,18 +279,30 @@ export function pairStats(itemBlock, equippedBlock) {
   // stats que existem só no equipado (item leiloado nem tem)
   equippedStats.forEach((e, i) => {
     if (used.has(i)) return;
+    let deltaLabel = null;
+    let deltaNum;
+    let sign;
+    if (useGameDelta && e.delta) {
+      deltaLabel = e.delta;
+      deltaNum = deltaValue(e.delta);
+      sign = deltaSign(e.delta);
+    } else {
+      deltaNum = -(e.value ?? 0);
+      sign = -1;
+    }
     rows.push({
       key: e.key,
       itemLabel: null,
       itemValue: null,
       equippedLabel: e.label,
       equippedValue: e.value,
-      deltaLabel: null,
-      sign: -1, // perder esse stat conta como downgrade
+      deltaLabel,
+      deltaNum,
+      sign,
     });
   });
 
-  return consolidateMainStats(rows);
+  return consolidateMainStats(rows, { useGameDelta });
 }
 
 // Resumo agregado pra UI: contagem de ups/downs/same e flag heurística
@@ -267,7 +341,10 @@ export function buildComparison(listing) {
   // Há comparação se o equipado existe E tem ao menos um stat. Soulbound
   // sozinho não conta — slot pode estar tecnicamente vazio.
   const hasComparison = !!(equippedBlock && Array.isArray(equippedBlock.stats) && equippedBlock.stats.length > 0);
-  const rows = pairStats(itemBlock, equippedBlock);
+  // Painel 2: tooltip duplo do leilão tem delta canônico no equipped block
+  // (= mudança no total do char ativo). Math direta entre values seria errada
+  // porque equippedValue é o total do char, não o valor do slot.
+  const rows = pairStats(itemBlock, equippedBlock, { useGameDelta: true });
   const itemLevel = itemBlock?.level ?? listing.level ?? null;
   const equippedLevel = equippedBlock?.level ?? null;
   const summary = summarizeRows(rows, hasComparison, { itemLevel, equippedLevel });

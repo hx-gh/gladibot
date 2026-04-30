@@ -14,8 +14,11 @@ export const config = {
     headless: bool(process.env.HEADLESS, false),
   },
   expedition: {
-    location: parseInt(process.env.EXPEDITION_LOCATION || '2', 10),
+    location: parseInt(process.env.EXPEDITION_LOCATION || '3', 10),
     stage: parseInt(process.env.EXPEDITION_STAGE || '2', 10),
+  },
+  dungeon: {
+    location: parseInt(process.env.DUNGEON_LOCATION || '1', 10),
   },
   heal: {
     thresholdPct: parseInt(process.env.HEAL_THRESHOLD_PCT || '20', 10),

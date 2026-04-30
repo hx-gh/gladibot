@@ -83,7 +83,7 @@ export async function tick(client) {
   }
 
   // 3. Dungeon (if free) — independent cooldown
-  const dung = await attackDungeon(client, state);
+  const dung = await attackDungeon(client, state, config.dungeon.location);
   if (dung.acted) {
     log.info('  dungeon fired');
   } else {

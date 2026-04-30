@@ -98,8 +98,74 @@
         <header class="card-head">
           <h2>Leilão</h2>
           <span class="muted" id="auctionTimeBucket">—</span>
-          <button id="btnRefreshAuction" class="btn btn-icon" title="Atualizar listagem">⟳</button>
+          <button id="btnRefreshAuction" class="btn btn-icon" title="Atualizar visualização ativa">⟳</button>
         </header>
+
+        <div class="auction-view-tabs" id="auctionViewTabs">
+          <button class="auction-view-tab active" data-view="listing">Listagem</button>
+          <button class="auction-view-tab" data-view="mercs">Sugestões Mercs</button>
+          <span class="auction-view-spacer"></span>
+          <label class="auction-mercs-ctrl" data-view-only="mercs">
+            <span class="muted">slots</span>
+            <select id="aucMercSlots">
+              <option value="3">3</option>
+              <option value="4" selected>4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="9">todos</option>
+            </select>
+          </label>
+          <button id="btnRefreshMercsStats" class="btn btn-icon auction-mercs-ctrl" data-view-only="mercs" title="Re-fetch stats/gear dos mercs e gerar sugestões">↻ stats</button>
+          <button id="btnAuctionLegend" class="btn btn-icon" title="Legenda dos ícones e fórmulas">?</button>
+        </div>
+
+        <div id="auctionLegend" class="auction-legend" hidden>
+          <div class="auction-legend-grid">
+            <div class="legend-section">
+              <h4>Score do candidato</h4>
+              <code class="legend-formula">score = Σ (peso × roleBoost × Δ_capped) + lvlΔ/5 + topBonus</code>
+              <ul>
+                <li><b>Δ</b> = (valor no item) − (valor no equipado). Stats só no item: Δ = valor.</li>
+                <li><b>peso</b>: força/dex/agi/con/car/int = 1.0; dano = 0.4; armadura = 0.1; saúde/cura = 0.02; crítico% = 1.5.</li>
+                <li><b>roleBoost</b>: vocação do char via <code>itemsMax</code> daquela stat — alto cap (≥80) = peso 1.6; baixo cap (&lt;5) = 0.25.</li>
+                <li><b>cap_delta</b>: saúde/cura ≤400, armadura ≤200, dano ≤100; acima disso, returns 50%.</li>
+                <li><b>lvlΔ/5</b>: bônus por gap de level item × equipado (item L70 vs equipado L50 = +4).</li>
+                <li><b>topBonus</b>: +1 por prefix top, +1 por suffix top.</li>
+                <li><b>wasted</b>: stat já no max do char (cap clamp) — contribuição zero.</li>
+              </ul>
+            </div>
+            <div class="legend-section">
+              <h4>Ícones na linha do candidato</h4>
+              <ul class="legend-icons">
+                <li><span class="legend-ic"><span class="cand-up">5↑</span></span> stats em que o item é melhor</li>
+                <li><span class="legend-ic"><span class="cand-down">2↓</span></span> stats em que perde vs equipado</li>
+                <li><span class="legend-ic"><span class="cand-cap">1⌃cap</span></span> ups que vão pra stat já no max (desperdiçados)</li>
+                <li><span class="legend-ic"><span class="cand-score">+45</span></span> score final (regra acima)</li>
+                <li><span class="legend-ic"><span class="cand-eff">3.2/k</span></span> eficiência: score por 1k gold equivalente (1r ≈ 1500g)</li>
+                <li><span class="legend-ic"><span class="cand-top">⭐</span></span> prefix ou suffix marcado top em <code>data/affixes.json</code></li>
+                <li><span class="legend-ic"><span class="cand-sb">🔒</span></span> soulbound (vinculado)</li>
+                <li><span class="legend-ic"><span class="cand-bid">◆</span></span> já tem ao menos um lance</li>
+                <li><span class="legend-ic"><span class="cand-dup">↻ ring1</span></span> mesmo item já listado em outro slot do merc — substitui só um</li>
+              </ul>
+            </div>
+            <div class="legend-section">
+              <h4>Slot do merc</h4>
+              <ul class="legend-icons">
+                <li><span class="legend-ic"><span class="slot-flag empty">VAZIO</span></span> slot sem item equipado (prioridade máxima)</li>
+                <li><span class="legend-ic"><span class="slot-flag urgent">URGENTE</span></span> gap grande de level entre char e item atual (≥10)</li>
+              </ul>
+              <p class="legend-note">Prioridade do slot = (charLvl − itemLvl) + qualityPenalty (cinza +5, verde +3, azul/roxo 0). Ranqueia top N slots por merc (configurável via "slots").</p>
+            </div>
+            <div class="legend-section">
+              <h4>Filtros</h4>
+              <ul>
+                <li><b>Levels</b>: range visível pelo jogo, calculado pela fórmula <code>auction-min/max-level</code>: <code>floor(0.75 × charLvl)</code> a <code>min(charLvl+14, ceil(1.25 × charLvl + 5.75))</code>.</li>
+                <li><b>itemLevelMin no recomendador</b>: <code>max(currentSlotLevel + 5, charLvl − 14)</code> — mais permissivo pra slots muito atrasados.</li>
+                <li><b>↻ stats</b>: força re-fetch dos paperdolls dos mercs antes de gerar sugestões. Use depois de equipar item via jogo.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
 
         <div class="auction-tabs" id="auctionTabs">
           <button class="auction-tab active" data-ttype="">Gladiador</button>
@@ -107,27 +173,24 @@
         </div>
 
         <div class="auction-filters">
-          <select id="aucItemType">
+          <select id="aucItemType" data-view-only="listing">
             <option value="0">Tudo</option>
             <option value="1">Armas</option>
             <option value="2">Escudos</option>
             <option value="3">Armadura</option>
             <option value="4">Capacetes</option>
-            <option value="5">Luvas</option>
+            <option value="5">Alças</option>
             <option value="6">Anéis</option>
             <option value="7">Cura</option>
             <option value="8">Sapatos</option>
             <option value="9">Amuletos</option>
-            <option value="11">Alças</option>
+            <option value="11">Consumíveis</option>
             <option value="12">Melhorias</option>
             <option value="15">Mercenário</option>
           </select>
-          <select id="aucItemLevel">
+          <select id="aucItemLevel" data-dynamic="auction-level-range">
+            <!-- popular dinamicamente em app.js via /api/formulas/auction-level-range -->
             <option value="36">Lvl 36+</option>
-            <option value="42">Lvl 42+</option>
-            <option value="48">Lvl 48+</option>
-            <option value="54">Lvl 54+</option>
-            <option value="60">Lvl 60+</option>
           </select>
           <select id="aucItemQuality">
             <option value="-1">Padrão+</option>
@@ -135,9 +198,9 @@
             <option value="1">Azul+</option>
             <option value="2">Roxo</option>
           </select>
-          <input id="aucQry" type="text" placeholder="Busca…" />
+          <input id="aucQry" type="text" placeholder="Busca…" data-view-only="listing" />
         </div>
-        <div class="auction-filters-aux">
+        <div class="auction-filters-aux" data-view-only="listing">
           <label class="auction-toggle">
             <input id="aucOnlyTop" type="checkbox" />
             <span>⭐ Só top prefix/suffix</span>
@@ -146,15 +209,26 @@
             <input id="aucOnlyUpgrades" type="checkbox" />
             <span>↑ Só upgrades</span>
           </label>
+          <label class="auction-toggle">
+            <input id="aucOnlyWithBids" type="checkbox" />
+            <span>◆ Só com lances</span>
+          </label>
+          <label class="auction-toggle">
+            <input id="aucOnlyMyBids" type="checkbox" />
+            <span>★ Só meus lances</span>
+          </label>
         </div>
 
-        <div id="auctionRows" class="auction-rows">
+        <div id="auctionRows" class="auction-rows" data-view-pane="listing">
           <div class="muted" style="text-align:center;padding:10px">Clique em ⟳ pra carregar</div>
+        </div>
+        <div id="mercsSuggestBody" class="mercs-suggest-body" data-view-pane="mercs" hidden>
+          <div class="muted" style="text-align:center;padding:14px">Clique em ⟳ pra carregar.</div>
         </div>
       </section>
 
       <section class="card placeholder-card">
-        <header class="card-head"><h2>Painel 3</h2></header>
+        <header class="card-head"><h2>PvP / Turma de Circo</h2></header>
         <div class="placeholder-body muted">a definir</div>
       </section>
     </div>

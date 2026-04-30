@@ -86,6 +86,22 @@ gladibot/
 └── browser-data/    ← perfil persistente do Playwright (gitignored)
 ```
 
+## Database
+
+- Use Node's built-in `node:sqlite` module instead of `better-sqlite3` (native build issues on this system)
+
+## HTTP Fetching
+
+- For game site requests, use direct `curl` with required XHR headers (e.g., `X-Requested-With: XMLHttpRequest`) rather than naive query-param URLs like `?doll=N`. Avoid spawning sub-agents for repetitive HTML scraping — they tend to hang; prefer direct curl loops.
+
+## Parser Iteration
+
+- HTML from this game is malformed; write parser regex defensively and add unit tests for: tooltip-wrapped buffs, flat+pct stat consolidation, PT-BR↔EN suffix mapping, and level-based upgrade comparisons (e.g., lvl 65 vs lvl 32 ring).
+
+## Debug Endpoints
+
+- Never reuse the active browser tab for debug/probe endpoints — open in a new tab or use curl to avoid ERR_ABORTED crashes.
+
 ## Regras Arquiteturais Fundamentais
 
 ### 1. Playwright só pra sessão. Ações via AJAX
