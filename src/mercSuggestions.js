@@ -45,11 +45,17 @@ const STAT_KEY_PT_TO_EN = {
 // dominar sobre saúde/armadura — esses dois vêm em magnitude alta no jogo
 // (50-500 típico) e estavam inflacionando o score.
 //
+// IMPORTANTE: as keys são os prefixos canônicos extraídos por `statKey()`.
+// Stats compostos como "valor de cura crítica +6" produzem prefix
+// `valor de cura crítica`. As versões curtas ('bloqueio', 'cura crítica')
+// usadas anteriormente NUNCA batiam com prefixes reais — corrigido em
+// 2026-04-30.
+//
 // Anchors aproximados:
 //   +25 atributo principal     ≈ 25 score
-//   +250 saúde                 ≈  5 score (era 12.5 com peso 0.05)
-//   +100 armadura              ≈ 10 score (era 30 com peso 0.3)
-//   +50 dano (range)           ≈ 20 score (era 25)
+//   +250 saúde                 ≈  5 score
+//   +100 armadura              ≈ 10 score
+//   +50 dano (range)           ≈ 20 score
 //   +5% crítico                ≈  7.5 score
 const STAT_VALUE_WEIGHT = {
   'força': 1.0, 'destreza': 1.0, 'agilidade': 1.0,
@@ -58,14 +64,117 @@ const STAT_VALUE_WEIGHT = {
   'armadura': 0.1,
   'saúde': 0.02,
   'cura': 0.02,
-  'bônus crítico': 1.5,
-  'bônus de bloqueio': 1.5,
-  'bloqueio': 1.5,
-  'cura crítica': 1.5,
+  'valor de dano crítico': 1.5,
+  'valor de cura crítica': 1.5,
+  'valor de bloqueio': 1.5,
+  'evoluindo o valor': 1.5,    // bônus de bloqueio
+  'ameaça': 0.5,
   'resistência': 0.5,
   'redução': 0.5,
   'experiência': 0.4,
 };
+
+// Overrides de peso por role da merc. Cada role tem stats que importam (peso
+// alto) e stats irrelevantes/contraproducentes (peso 0). Aplicados em cima do
+// STAT_VALUE_WEIGHT quando a role da merc é classificada.
+//
+// Roles:
+//   medico  — cura, cura crítica, inteligência (sustento de party)
+//   tanque  — bloqueio, ameaça, evoluindo (puxar dano), saúde, constituição
+//   killer  — dano, dano crítico, força/destreza (DPS puro)
+//
+// Default fica STAT_VALUE_WEIGHT pra char sem role classificada.
+const ROLE_WEIGHT_OVERRIDES = {
+  medico: {
+    'cura': 1.0,
+    'valor de cura crítica': 2.5,
+    'inteligência': 1.5,
+    'constituição': 0.8,
+    'saúde': 0.05,
+    'carisma': 0.3,
+    'dano': 0.0,
+    'valor de dano crítico': 0.0,
+    'força': 0.1,
+    'destreza': 0.1,
+    'agilidade': 0.1,
+    'ameaça': 0.0,
+    'valor de bloqueio': 0.0,
+    'evoluindo o valor': 0.0,
+  },
+  tanque: {
+    'valor de bloqueio': 2.0,
+    'evoluindo o valor': 2.0,
+    'ameaça': 1.5,
+    'constituição': 1.5,
+    'saúde': 0.1,
+    'armadura': 0.2,
+    'dano': 0.1,
+    'valor de dano crítico': 0.2,
+    'cura': 0.3,
+    'valor de cura crítica': 0.5,
+    'inteligência': 0.0,
+    'força': 0.5,
+    'destreza': 0.5,
+    'agilidade': 0.5,
+  },
+  killer: {
+    'dano': 0.8,
+    'valor de dano crítico': 2.5,
+    'força': 1.0,
+    'destreza': 1.0,
+    'agilidade': 1.0,
+    'carisma': 1.0,
+    'cura': 0.0,
+    'valor de cura crítica': 0.0,
+    'inteligência': 0.0,
+    'ameaça': 0.0,
+    'valor de bloqueio': 0.0,
+    'evoluindo o valor': 0.0,
+  },
+};
+
+// Ordem fixa de roles por posição da merc (usuário mapeou em 2026-04-30).
+// Aplicada quando inferência por nome/equipamento falha. Posição = index na
+// lista de MERCS REAIS (doll != 1), ordenados por doll asc.
+const ROLE_BY_POSITION = ['medico', 'killer', 'tanque', 'killer'];
+
+// Detecta role pelo nome da role do char ou pelas stats do equipamento.
+// Druida → medico; presença de bloqueio/ameaça em múltiplas peças → tanque;
+// resto → null (caller decide fallback).
+//
+// Contagem por PEÇA (não por stat): uma armadura defensiva pode ter 3 stats
+// de bloqueio/ameaça/evoluindo numa peça só — sem o `break`, killer com 1 peça
+// defensiva era classificado como tanque.
+function inferRoleFromChar(char) {
+  const roleName = (char.role || '').toLowerCase();
+  if (/druida|sacerdote|curandeir|m[eé]dico/.test(roleName)) return 'medico';
+  let healPieces = 0;
+  let blockPieces = 0;
+  for (const it of char.equipped || []) {
+    let pieceHasHeal = false;
+    let pieceHasBlock = false;
+    for (const s of it.stats || []) {
+      const lbl = (s.label || '').toLowerCase();
+      if (/^cura\b|valor de cura/.test(lbl)) pieceHasHeal = true;
+      if (/valor de bloqueio|^ameaça|evoluindo o valor/.test(lbl)) pieceHasBlock = true;
+    }
+    if (pieceHasHeal) healPieces++;
+    if (pieceHasBlock) blockPieces++;
+  }
+  if (healPieces >= 3) return 'medico';
+  if (blockPieces >= 3) return 'tanque';
+  return null;
+}
+
+// `mercPosition` é o index entre MERCS reais (doll != 1). Pra doll=1 (player
+// main), não aplica ROLE_BY_POSITION — usa só inferência por nome/stats e cai
+// pra null (= sem override; usa STAT_VALUE_WEIGHT puro + roleStatBoost).
+export function resolveMercRole(char, mercPosition) {
+  if (char.doll === 1) {
+    return inferRoleFromChar(char); // pode ser null
+  }
+  return inferRoleFromChar(char) || ROLE_BY_POSITION[mercPosition] || 'killer';
+}
 
 // Cap de retornos: stat com magnitude muito acima do "típico" tem returns
 // diminuídos (50% após o cap). Evita item especial com saúde +1000 dominar
@@ -77,7 +186,11 @@ const STAT_DELTA_CAP = {
   'dano': 100,
 };
 
-function statValueWeight(prefix) {
+function statValueWeight(prefix, role) {
+  if (role && ROLE_WEIGHT_OVERRIDES[role]) {
+    const overrides = ROLE_WEIGHT_OVERRIDES[role];
+    if (prefix in overrides) return overrides[prefix];
+  }
   return STAT_VALUE_WEIGHT[prefix] ?? 0.5;
 }
 
@@ -133,14 +246,13 @@ function annotateWaste(rows, charStats) {
 // `cap(Δ)` aplica diminishing returns acima do "típico" pra evitar items
 // outlier (saúde +1000) dominar o ranking.
 //
-// Usa `r.deltaNum` quando disponível — é o delta canônico do jogo (Painel 2)
-// ou math direta (Painel 3). Sem isso, fallback final é math direta inline.
-function computeWeightedScore(rows, charStats, lvlDiff, topBonus) {
+// `role` (opcional): aplica ROLE_WEIGHT_OVERRIDES por cima de STAT_VALUE_WEIGHT.
+function computeWeightedScore(rows, charStats, lvlDiff, topBonus, role = null) {
   let weighted = 0;
   for (const r of rows) {
     if (r.wasted) continue;
     const prefix = (r.key.split('-')[0] || '').toLowerCase();
-    const w = statValueWeight(prefix);
+    const w = statValueWeight(prefix, role);
     const boost = roleStatBoost(charStats, prefix);
     const rawDelta = r.deltaNum != null
       ? r.deltaNum
@@ -238,7 +350,11 @@ export function buildSuggestions(allListings, mercs, options = {}) {
   const topPerSlot = options.topPerSlot ?? 3;
   const slotsToConsider = options.slotsToConsider ?? 4;
 
+  // Conta posição entre mercs reais (doll != 1) pra ROLE_BY_POSITION.
+  let mercIndex = 0;
   return mercs.map((char) => {
+    const position = char.doll === 1 ? -1 : mercIndex++;
+    const mercRole = resolveMercRole(char, position);
     const ranked = rankSlots(char).slice(0, slotsToConsider);
     const suggestions = [];
     for (const r of ranked) {
@@ -267,10 +383,10 @@ export function buildSuggestions(allListings, mercs, options = {}) {
         // 1. Marca rows wasted conforme o cap do merc.
         const waste = annotateWaste(rows, char.stats);
 
-        // 2. Score weighted por magnitude × peso × role boost + bonus de top.
+        // 2. Score weighted por magnitude × peso(role) × role boost + bonus de top.
         const topBonus = topAffixBonus(l);
         const weightedScore = computeWeightedScore(
-          rows, char.stats, rawSummary.lvlDiff, topBonus,
+          rows, char.stats, rawSummary.lvlDiff, topBonus, mercRole,
         );
         const score = Math.round(weightedScore * 10) / 10;
         if (score <= 0) continue; // descarta se net não positivo
@@ -293,6 +409,7 @@ export function buildSuggestions(allListings, mercs, options = {}) {
 
         scored.push({
           auctionId: l.auctionId,
+          formTtype: l.formTtype ?? null,
           name: l.name,
           baseName: l.baseName,
           level: l.level,
@@ -338,6 +455,7 @@ export function buildSuggestions(allListings, mercs, options = {}) {
       name: char.name,
       level: char.level,
       role: char.role,
+      mercRole,
       suggestions,
     };
   });

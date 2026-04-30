@@ -1,6 +1,6 @@
 ---
 date: 2026-04-28
-updated: 2026-04-29
+updated: 2026-04-30
 ---
 
 # Gladibot — Project State
@@ -24,7 +24,7 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `src/itemCompare.js` (pareamento e consolidação) | ✅ Pronto | `pairStats(itemBlock, equippedBlock, {useGameDelta})`, `consolidateMainStats`, `summarizeRows` com score lvlDiff/5, `buildComparison`. Dual-format parsing, flat+% consolidação pra 6 atributos (DEC-11, DEC-12) |
 | `src/actions/heal.js` | ✅ Pronto | Greedy "não extrapolar" |
 | `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
-| `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai |
+| `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai. `parseDungeonFights` marca `isBoss` via `<div class="map_label">Chefe`; `DUNGEON_SKIP_BOSS` (default true) filtra boss e dispara `cancelDungeon`+`restartDungeon` quando só sobra boss (DEBT-10) |
 | `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`); aceita `opts={force,jobType,hours}` pra fallback AFK |
 | `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → AFK fallback (lowHp+noFood→work 8h) → exp → masm → work fallback (pontos zerados) → heal post; chama `setSnapshot` a cada parse |
 | `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
@@ -71,6 +71,8 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Painel 3 Sugestões Mercs — recomendador de upgrade pros 4 mercs em 1 fetch único (`/api/mercs/suggestions`), comparação local via SQLite (`readEquippedBlock`) reusando `pairStats`/`summarizeRows`. Click no candidato → scroll+expand no Painel 2 | 2026-04-29 |
 | Auction list — chip "com lance / sem lance" no card de listing (rendering do `hasBids` que o parser já produzia) | 2026-04-29 |
 | Painel 2 Leilão — Bid via UI: botões Lance/Comprar por listing, parser estendido (`myBid`/`currentBid`/`formTtype`), endpoint `POST /api/auction/bid` gated, filtros "só com lances"/"só meus lances", chip ★ "MEU LANCE" e tracking local de IDs em `botState.myBidAuctionIds` (DEC-21) | 2026-04-29 |
+| Painel 3 Sugestões Mercs — merc role-weighted score (DEC-22, DEC-23) | 2026-04-30 |
+| Skip do boss da masmorra (DEBT-10) — parser detecta `<div class="map_label">Chefe`, `DUNGEON_SKIP_BOSS` (default true) filtra boss; se só sobra boss, `cancelDungeon` + `restartDungeon` automáticos no mesmo tick (volta a ter monstros normais) | 2026-04-30 |
 
 ### Em andamento
 

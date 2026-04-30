@@ -278,8 +278,14 @@ export function startUiServer() {
       if (ttype !== undefined) fetchOpts.ttype = ttype;
       const list = await fetchAuctionList(client, fetchOpts);
       const chars = readAllCharacters();
-      const mercs = chars.filter((c) => c.doll !== 1);
-      const suggestions = buildSuggestions(list.listings, mercs, { slotsToConsider });
+      // Inclui o char principal (doll=1) + mercs reais. Player alts (mesmo
+      // nome do main, doll!=1) são pulados pra não bagunçar a ordem
+      // posicional dos mercs (médico, killer, tanque, killer).
+      const playerName = view?.snapshot?.charName ?? chars.find((c) => c.doll === 1)?.name ?? null;
+      const orderedChars = chars
+        .filter((c) => c.doll === 1 || !playerName || c.name !== playerName)
+        .sort((a, b) => a.doll - b.doll);
+      const suggestions = buildSuggestions(list.listings, orderedChars, { slotsToConsider });
 
       // Dedup entre slots (ring1/ring2 principalmente): se um mesmo
       // auctionId aparece em mais de um slot do mesmo merc, mantemos apenas
@@ -302,6 +308,7 @@ export function startUiServer() {
         ttype: ttype ?? null, itemLevel, itemQuality, slotsToConsider, refreshed: refresh,
         charLevel, range,
         listingsCount: list.listings.length,
+        globalTimeBucket: list.globalTimeBucket ?? null,
         mercs: suggestions,
       });
     } catch (e) {

@@ -19,6 +19,9 @@ export const config = {
   },
   dungeon: {
     location: parseInt(process.env.DUNGEON_LOCATION || '1', 10),
+    // Quando true, pula o boss (div.map_label "Chefe") e fica idle se só ele
+    // sobrar. Default true: evita queimar pontos em boss mais forte que o char.
+    skipBoss: bool(process.env.DUNGEON_SKIP_BOSS, true),
   },
   heal: {
     thresholdPct: parseInt(process.env.HEAL_THRESHOLD_PCT || '20', 10),

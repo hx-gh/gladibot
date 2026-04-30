@@ -1384,6 +1384,17 @@ body {
   margin-left: auto;
   font-style: italic;
 }
+.merc-role-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.4px;
+}
+.merc-role-medico { background: rgba(80, 180, 220, 0.18); color: #6cc8e0; border: 1px solid rgba(80, 180, 220, 0.4); }
+.merc-role-tanque { background: rgba(180, 140, 60, 0.18); color: #d4a849; border: 1px solid rgba(180, 140, 60, 0.4); }
+.merc-role-killer { background: rgba(220, 80, 90, 0.18); color: #e07073; border: 1px solid rgba(220, 80, 90, 0.4); }
 
 .merc-suggest-slot-row {
   padding: 5px 10px;
@@ -1728,7 +1739,8 @@ body {
 }
 
 /* ─── Bid actions (botões Lance/Comprar no card) ─── */
-.auction-bid-actions {
+.auction-bid-actions,
+.merc-cand-bid-actions {
   display: flex;
   gap: 4px;
   margin-top: 6px;
@@ -1736,7 +1748,8 @@ body {
   border-top: 1px dashed var(--border);
   align-items: center;
 }
-.auction-bid-actions .muted { font-size: 10px; }
+.auction-bid-actions .muted,
+.merc-cand-bid-actions .muted { font-size: 10px; }
 .auction-bid-btn {
   font-size: 11px;
   padding: 3px 8px;

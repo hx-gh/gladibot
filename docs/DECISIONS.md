@@ -344,3 +344,47 @@ Sub-problemas resolvidos nesta sessão:
 - *Cópia literal do webservices-core*: muitos arquivos seriam inaplicáveis (PAYMENTS_COMPLETION_PLAN, FRONTEND_MAP).
 - *Manter só `docs/memory.md` + `flows.md`*: insuficiente — sem ADR, sem débito tracking, sem checkpoint flow.
 **Consequências:** Trabalho extra de manter docs sincronizadas. Em troca: continuidade entre sessões do Claude, decisões registradas, débitos visíveis. Quando o projeto crescer (multi-bot, multi-server?), a estrutura escala.
+
+---
+
+### [DEC-22] Comparação de stats no leilão usa math direta — `delta` do tooltip do equipped é intrínseco, não de swap
+
+**Data:** 2026-04-30
+**Contexto:** O tooltip do leilão tem 2 blocos: `item` e `equipped`. O bloco `equipped` traz um campo `delta` em cada linha de stat (ex: `"Armadura +1038"` com `delta: "+135"`). DEC-11 e código original interpretavam esse `delta` como **mudança no total do char se o item leiloado fosse equipado** (delta de swap). `itemCompare.js` tinha flag `useGameDelta=true` no Painel 2 confiando nesse campo.
+
+Verificação empírica em 2026-04-30 (lendo `data/raw/auction-glad.json`): o **mesmo item equipado** expõe os **mesmos `delta` em todas as listings do leilão**, independente do item leiloado. Logo `delta` não é função do par (item, equipped) — é uma propriedade intrínseca do equipped (provavelmente bônus de conditioning/qualidade do item ali no slot). Resultado: deltas exibidos na UI estavam **errados** (ex: Armadura +344 vs +609 mostrava `▲ +79`, era o bônus intrínseco do equipped — math direta dá `▲ +265`).
+
+**Decisão:** removida a flag `useGameDelta` inteira. `pairStats` e `consolidateMainStats` sempre calculam delta como math direta `itemValue − equippedValue`. Funções `deltaSign`/`deltaValue` deletadas (não usadas mais). O `delta` continua sendo parseado pelo `parseAuctionTooltipBlock` (não custa nada) mas não é mais lido por nada.
+
+**Alternativas rejeitadas:**
+- *Manter `useGameDelta=true` mas só pro Painel 2*: o bug existe nele também — mesmo problema.
+- *Reinterpretar `delta` como "bônus intrínseco" e exibir como info adicional*: feature creep — pode entrar depois se o user pedir.
+
+**Consequências:** Deltas batem com `itemValue − equippedValue` em todos os Painéis. DEC-11 fica desatualizada (a parte que afirma `delta` é fonte de verdade pra swap). Comentários em `itemCompare.js` explicam o achado pra evitar regressão.
+
+---
+
+### [DEC-23] Roles de merc com override de pesos por posição + inferência por nome/stats
+
+**Data:** 2026-04-30
+**Contexto:** O score do Painel 3 (DEC-20) é magnitude-weighted via `STAT_VALUE_WEIGHT` + `roleBoost(itemsMax)`. Mas `STAT_VALUE_WEIGHT` é genérico — pra um médico, `cura` deveria pesar 1.0 e `dano` 0.0; pra tanque, `valor de bloqueio` deveria pesar 2.0; pra killer, `valor de dano crítico` 2.5. `roleBoost` via `itemsMax` cobre só atributos primários, não esses stats compostos.
+
+Bug correlato descoberto: as keys `'cura crítica'`, `'bloqueio'`, `'bônus de bloqueio'` em `STAT_VALUE_WEIGHT` **nunca batiam** com prefixos reais do parser (`'valor de cura crítica'`, `'valor de bloqueio'`, `'evoluindo o valor'`) — esses stats sempre caíam pro fallback `0.5`.
+
+**Decisão:** introduzido `ROLE_WEIGHT_OVERRIDES` em `src/mercSuggestions.js`:
+- **medico** — `cura` 1.0, `valor de cura crítica` 2.5, `inteligência` 1.5; dano/crítico/ameaça zerados.
+- **tanque** — `valor de bloqueio` 2.0, `evoluindo o valor` 2.0, `ameaça` 1.5, `constituição` 1.5.
+- **killer** — `dano` 0.8, `valor de dano crítico` 2.5, atributos primários 1.0.
+
+`resolveMercRole(char, mercPosition)`:
+1. Player main (doll=1) → só inferência por nome/stats; se falhar, retorna `null` (sem override; usa pesos genéricos + roleBoost).
+2. Mercs reais → infere por role name (Druida → medico) + stats (≥3 peças com cura/bloqueio); fallback `ROLE_BY_POSITION = ['medico', 'killer', 'tanque', 'killer']` (ordem definida pelo user em 2026-04-30 — primeiro merc sempre médico, depois killer/tanque/killer).
+
+`computeWeightedScore` aceita role e aplica override. `buildSuggestions` resolve role uma vez por char e propaga; output ganha campo `mercRole`. Server filtra player alts (mesmo nome do main, doll≠1) pra não bagunçar o índice posicional.
+
+**Alternativas rejeitadas:**
+- *Inferir só por role name*: nomes em PT-BR variam entre servidores; novo merc sem nome conhecido cai no genérico.
+- *ML pra inferir role*: overkill — heurística de nome + stats + position cobre 100% dos casos atuais.
+- *Pedir o user configurar role manualmente por merc*: friction inútil; user já mapeou a ordem posicional uma vez (essa decisão).
+
+**Consequências:** Score agora reflete vocação real do merc — médico não recebe sugestão de armadura física; killer não recebe sugestão de cura. Keys de `STAT_VALUE_WEIGHT` corrigidas (canônicas). UI ganha badge colorida por role no header de cada merc. Se a ordem dos mercs mudar in-game, `ROLE_BY_POSITION` precisa ser atualizado (constante simples).

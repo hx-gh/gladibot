@@ -323,6 +323,7 @@ async function onTrainClick(skillId) {
 }
 
 const QUALITY_LABEL = { 0: 'verde', 1: 'azul', 2: 'roxo' };
+const MERC_ROLE_LABEL = { medico: 'médico', tanque: 'tanque', killer: 'killer' };
 let aucTtype = ''; // '' = aba default (gladiador), '3' = mercenário
 let aucOnlyUpgrades = false;
 let aucOnlyWithBids = false;
@@ -628,9 +629,16 @@ function renderAuction(data) {
     : `${listings.length}/${data.listings.length} itens · ${t.topAny ?? 0}⭐${upBits}${bidBits}`;
   els.auctionTimeBucket.textContent = summary;
   if (!listings.length) {
-    const msg = aucOnlyUpgrades && data.listings.length
-      ? 'nenhum upgrade nessa busca'
-      : 'sem itens';
+    let msg;
+    if (aucOnlyUpgrades && data.listings.length) {
+      msg = 'nenhum upgrade nessa busca';
+    } else if (!data.listings.length) {
+      const qVal = parseInt(els.aucItemQuality.value, 10);
+      const qHint = qVal === 1 ? ' (azul+)' : qVal === 2 ? ' (roxo)' : qVal === 0 ? ' (verde+)' : '';
+      msg = `nenhum item${qHint} nesse filtro · tente outra qualidade ou level`;
+    } else {
+      msg = 'sem itens';
+    }
     els.auctionRows.innerHTML = `<div class="muted" style="text-align:center;padding:10px">${msg}</div>`;
     return;
   }
@@ -1133,7 +1141,9 @@ function renderCandidate(merc, slot, c) {
         <span class="cand-score" title="score = Σ(peso × roleBoost × Δ) − downs + lvlΔ/5 + topBonus">${score}</span>
         <span class="cand-buy">${fmtBuyout(c)} ${eff} ${bidMark}</span>
       </button>
-      <div class="merc-suggest-candidate-detail" ${expanded ? '' : 'hidden'}>${expanded ? renderCandidateExpanded(c) : ''}</div>
+      <div class="merc-suggest-candidate-detail" ${expanded ? '' : 'hidden'}>
+        ${expanded ? renderCandidateExpanded(c) + renderCandidateBidActions(c, key) : ''}
+      </div>
     </div>`;
 }
 
@@ -1168,12 +1178,16 @@ function renderMercSuggestionsBlock(merc) {
         <div class="merc-suggest-candidates">${candHtml}</div>
       </div>`;
   }).join('');
+  const roleBadge = merc.mercRole
+    ? `<span class="merc-role-badge merc-role-${merc.mercRole}" title="role aplicada nos pesos">${MERC_ROLE_LABEL[merc.mercRole] || merc.mercRole}</span>`
+    : '';
   return `
     <div class="merc-suggest-block">
       <div class="merc-suggest-block-head">
         <span class="merc-doll-pill">d${merc.doll}</span>
         <span class="merc-name">${escapeHtml(merc.name || `doll ${merc.doll}`)}</span>
         <span class="muted">L${merc.level ?? '?'}</span>
+        ${roleBadge}
         <span class="muted merc-role">${escapeHtml(merc.role || '?')}</span>
       </div>
       ${slotsHtml || '<div class="merc-suggest-empty-row">sem slots avaliados</div>'}
@@ -1194,8 +1208,9 @@ function renderMercSuggestions(data) {
     (n, m) => n + m.suggestions.reduce((nn, s) => nn + s.candidates.length, 0), 0,
   );
   const rangeBit = data.range ? ` · L${data.range.min}-${data.range.max}` : '';
+  const timeBit = data.globalTimeBucket ? `${data.globalTimeBucket} · ` : '';
   els.auctionTimeBucket.textContent =
-    `${mercs.length} mercs · ${totalCandidates} candidatos · ${data.listingsCount} listings${rangeBit}`;
+    `${timeBit}${mercs.length} chars · ${totalCandidates} candidatos · ${data.listingsCount} listings${rangeBit}`;
   els.mercsSuggestBody.innerHTML = mercs.map(renderMercSuggestionsBlock).join('');
 }
 
@@ -1232,8 +1247,127 @@ if (els.btnAuctionLegend && els.auctionLegend) {
   });
 }
 
-// Click no botão do candidato: alterna expansão inline (mostra tabela cmp).
+function lookupMercCandidate(key) {
+  if (!lastMercData) return null;
+  const parts = key.split('-');
+  const doll = parseInt(parts[0], 10);
+  const slot = parts[1];
+  const auctionId = parseInt(parts[2], 10);
+  const merc = lastMercData.mercs.find((m) => m.doll === doll);
+  const slotData = merc?.suggestions.find((s) => s.slot === slot);
+  return slotData?.candidates.find((c) => c.auctionId === auctionId) || null;
+}
+
+function renderCandidateBidActions(c, key) {
+  const actDisabled = !actionsEnabled;
+  const actTitle = actDisabled ? 'actions desabilitadas — habilite no topbar' : '';
+  return `
+    <div class="merc-cand-bid-actions" data-cand-actions="${key}">
+      <button class="auction-bid-btn merc-cand-bid" data-cand-bid="${c.auctionId}" data-cand-key="${key}" data-min="${c.minBid ?? ''}" data-ttype="${c.formTtype ?? ''}" ${actDisabled ? 'disabled' : ''} title="${actTitle || 'Dar lance'}">Lance</button>
+      <button class="auction-bid-btn is-buyout merc-cand-buy" data-cand-buy="${c.auctionId}" data-cand-key="${key}" data-ttype="${c.formTtype ?? ''}" ${actDisabled || c.buyoutGold === null ? 'disabled' : ''} title="${actTitle || 'Comprar imediato'}">Comprar</button>
+      <span class="auction-bid-status muted" data-cand-status="${key}"></span>
+    </div>`;
+}
+
+function setMercBidStatus(key, msg, kind = '') {
+  const el = els.mercsSuggestBody.querySelector(`[data-cand-status="${key}"]`);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = `auction-bid-status ${kind ? `is-${kind}` : 'muted'}`;
+}
+
+async function doCandidateBid(c, key, opts) {
+  const ttype = c.formTtype ?? (aucTtype ? parseInt(aucTtype, 10) : 1);
+  const body = { auctionId: c.auctionId, ttype, filterEcho: buildFilterEcho(), ...opts };
+  setMercBidStatus(key, 'enviando…');
+  try {
+    const res = await fetch('/api/auction/bid', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      setMercBidStatus(key, data.reason || data.error || `HTTP ${res.status}`, 'error');
+      return;
+    }
+    setMercBidStatus(key, opts.buyout ? 'comprado!' : 'lance enviado', 'ok');
+    setTimeout(() => refreshMercSuggestionsView(), 600);
+  } catch (e) {
+    setMercBidStatus(key, e.message, 'error');
+  }
+}
+
+function showMercBidForm(c, key) {
+  const container = els.mercsSuggestBody.querySelector(`[data-cand-actions="${key}"]`);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="auction-bid-form">
+      <span class="muted">lance:</span>
+      <input type="number" min="0" step="1" value="${c.minBid ?? 0}" data-cand-bid-input="${key}" />
+      <button class="auction-bid-btn merc-cand-bid-confirm" data-cand-confirm="${key}">Confirmar</button>
+      <button class="auction-bid-btn is-cancel merc-cand-bid-cancel" data-cand-cancel="${key}">Cancelar</button>
+    </div>
+    <span class="auction-bid-status muted" data-cand-status="${key}"></span>`;
+  const input = container.querySelector(`[data-cand-bid-input="${key}"]`);
+  if (input) { input.focus(); input.select(); }
+}
+
+function restoreMercBidActions(key) {
+  const cand = lookupMercCandidate(key);
+  if (!cand) return;
+  const container = els.mercsSuggestBody.querySelector(`[data-cand-actions="${key}"]`);
+  if (!container) return;
+  container.outerHTML = renderCandidateBidActions(cand, key);
+}
+
+// Click no botão do candidato: alterna expansão inline (mostra tabela cmp + bid).
 els.mercsSuggestBody.addEventListener('click', (e) => {
+  // Lance — abre form inline
+  const bidBtn = e.target.closest('.merc-cand-bid');
+  if (bidBtn) {
+    e.stopPropagation();
+    const key = bidBtn.dataset.candKey;
+    const cand = lookupMercCandidate(key);
+    if (cand) showMercBidForm(cand, key);
+    return;
+  }
+  // Comprar — confirm + dispara
+  const buyBtn = e.target.closest('.merc-cand-buy');
+  if (buyBtn) {
+    e.stopPropagation();
+    const key = buyBtn.dataset.candKey;
+    const cand = lookupMercCandidate(key);
+    if (!cand) return;
+    const priceLabel = `${fmtNum(cand.buyoutGold)}g${cand.buyoutRubies ? ` + ${fmtNum(cand.buyoutRubies)}r` : ''}`;
+    if (!confirm(`Comprar agora?\n${cand.name || `auction ${cand.auctionId}`}\nPreço: ${priceLabel}`)) return;
+    doCandidateBid(cand, key, { buyout: true });
+    return;
+  }
+  // Confirma bid form
+  const confirmBtn = e.target.closest('.merc-cand-bid-confirm');
+  if (confirmBtn) {
+    e.stopPropagation();
+    const key = confirmBtn.dataset.candConfirm;
+    const cand = lookupMercCandidate(key);
+    if (!cand) return;
+    const input = els.mercsSuggestBody.querySelector(`[data-cand-bid-input="${key}"]`);
+    const value = input ? parseInt(input.value, 10) : NaN;
+    if (!Number.isFinite(value) || value <= 0) {
+      setMercBidStatus(key, 'valor inválido', 'error');
+      return;
+    }
+    doCandidateBid(cand, key, { buyout: false, bidAmount: value });
+    return;
+  }
+  // Cancela bid form
+  const cancelBtn = e.target.closest('.merc-cand-bid-cancel');
+  if (cancelBtn) {
+    e.stopPropagation();
+    restoreMercBidActions(cancelBtn.dataset.candCancel);
+    return;
+  }
+  // Expand/colapse normal
   const btn = e.target.closest('.merc-suggest-candidate-row');
   if (!btn) return;
   const key = btn.dataset.toggle;
@@ -1253,20 +1387,13 @@ els.mercsSuggestBody.addEventListener('click', (e) => {
     wrapper.classList.add('is-expanded');
     btn.setAttribute('aria-expanded', 'true');
     if (arrow) arrow.textContent = '▼';
-    if (lastMercData) {
-      const [dollStr, slot, auctionIdStr] = key.split('-');
-      const doll = parseInt(dollStr, 10);
-      const auctionId = parseInt(auctionIdStr, 10);
-      const merc = lastMercData.mercs.find((m) => m.doll === doll);
-      const slotData = merc?.suggestions.find((s) => s.slot === slot);
-      const cand = slotData?.candidates.find((c) => c.auctionId === auctionId);
-      if (cand) {
-        detail.innerHTML = renderCandidateExpanded(cand);
-      } else {
-        detail.innerHTML = `<div class="auction-compare-empty muted">candidato não encontrado em lastMercData (doll=${doll} slot=${slot} auctionId=${auctionId})</div>`;
-      }
-    } else {
+    const cand = lookupMercCandidate(key);
+    if (cand) {
+      detail.innerHTML = renderCandidateExpanded(cand) + renderCandidateBidActions(cand, key);
+    } else if (!lastMercData) {
       detail.innerHTML = '<div class="auction-compare-empty muted">lastMercData ainda não foi carregado — clique em ⟳</div>';
+    } else {
+      detail.innerHTML = `<div class="auction-compare-empty muted">candidato não encontrado em lastMercData</div>`;
     }
     detail.hidden = false;
   }
