@@ -34,14 +34,41 @@ function sleepMs(ms) {
   return new Promise((r) => setTimeout(r, Math.max(0, ms)));
 }
 
+// Heartbeat: durante sleep longo (cooldown ou work), navega pra overview a
+// cada ~90s±45s pra renovar cookies + sh/csrf. Sem isso, POSTs (filtro do
+// leilão principalmente) caem em redirect pro lobby Gameforge depois de
+// alguns minutos parados, sem que o `_exec` perceba (resposta é 200 com HTML
+// do lobby, não 401/403). Jitter pra mascarar — distribuição uniforme em
+// [45s, 135s], indistinguível de player olhando a aba a cada 1–2min.
+const HEARTBEAT_BASE_SEC = 90;
+const HEARTBEAT_JITTER_SEC = 45;
+function nextHeartbeatDelay() {
+  const j = (Math.random() * 2 - 1) * HEARTBEAT_JITTER_SEC;
+  return Math.max(30, HEARTBEAT_BASE_SEC + j);
+}
+
 // Sleep that wakes up early on tick-now request and checks pause state.
 // Polls every 500ms — fine for a UI driven by 2s polling on the other side.
-async function interruptibleSleep(seconds, stopRef) {
+async function interruptibleSleep(seconds, stopRef, page, session) {
   const end = Date.now() + seconds * 1000;
+  let nextHb = Date.now() + nextHeartbeatDelay() * 1000;
   setNextTickAt(end);
   while (Date.now() < end) {
     if (stopRef.stopping) return 'stop';
     if (consumeTickNowRequest()) return 'tick-now';
+    // Heartbeat: só dispara se ainda sobrar pelo menos 5s de sleep — perto do
+    // fim, o tick natural já vai navegar e renovar.
+    if (page && session && Date.now() >= nextHb && Date.now() + 5000 < end) {
+      try {
+        const fresh = await readSession(page);
+        session.sh = fresh.sh;
+        session.csrf = fresh.csrf;
+        log.debug('heartbeat: session refreshed');
+      } catch (e) {
+        log.warn(`heartbeat refresh failed: ${e.message}`);
+      }
+      nextHb = Date.now() + nextHeartbeatDelay() * 1000;
+    }
     await sleepMs(Math.min(500, end - Date.now()));
   }
   return 'done';
@@ -125,10 +152,24 @@ async function main() {
     // hiccups, transient game-side 5xx — log.warn + sleep brief + retry.
     const TICK_ERROR_RETRY_SEC = 30;
 
+    let nextPauseHb = Date.now() + nextHeartbeatDelay() * 1000;
     do {
-      // Pause gate — block (with polling) while UI keeps us paused.
+      // Pause gate — block (with polling) while UI keeps us paused. Mesmo
+      // ritmo de heartbeat do sleep: durante pause longo (user investigando
+      // algo na UI), session ainda precisa ficar viva.
       while (isPaused() && !stopRef.stopping) {
         setNextTickAt(null);
+        if (Date.now() >= nextPauseHb) {
+          try {
+            const fresh = await readSession(gamePage);
+            client.session.sh = fresh.sh;
+            client.session.csrf = fresh.csrf;
+            log.debug('heartbeat (pause): session refreshed');
+          } catch (e) {
+            log.warn(`heartbeat (pause) refresh failed: ${e.message}`);
+          }
+          nextPauseHb = Date.now() + nextHeartbeatDelay() * 1000;
+        }
         await sleepMs(500);
       }
       if (stopRef.stopping) break;
@@ -158,7 +199,7 @@ async function main() {
       if (!flags.loop || stopRef.stopping) break;
 
       log.info(`sleeping ${sleepSec}s`);
-      const reason = await interruptibleSleep(sleepSec, stopRef);
+      const reason = await interruptibleSleep(sleepSec, stopRef, gamePage, client.session);
       if (reason === 'tick-now') log.info('tick-now requested, waking up early');
     } while (!stopRef.stopping);
   } catch (e) {

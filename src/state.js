@@ -279,7 +279,129 @@ export function parseOverview(html) {
   }
   state.inventoryFood.sort((a, b) => a.healNominal - b.healNominal);
 
+  // Ocupação dos bags (512..515 = Ⅰ..Ⅳ). Usado por actions/packages.js pra achar
+  // slot livre antes de mover. Só vê itens renderizados (getHtml — JS roda);
+  // fetchRawHtml deixa #inv vazio e o BagLoader em script, esse parser não cobre.
+  state.inventoryGrid = parseInventoryGrid(html);
+
   return state;
+}
+
+// Cada item tem data-position-x/y (1-based) e data-measurement-x/y (tamanho em
+// células). Bag = 8 colunas × 5 linhas. Retorna {512: [...], 513: [...], 514: [...], 515: [...]}.
+export function parseInventoryGrid(html) {
+  const bags = { 512: [], 513: [], 514: [], 515: [] };
+  const re = /<div\b[^>]*\bdata-container-number=["'](51[2-5])["'][^>]*>/g;
+  for (const m of html.matchAll(re)) {
+    const tag = m[0];
+    const get = (name) => {
+      const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
+      const mm = tag.match(r);
+      return mm ? mm[1] : null;
+    };
+    const bag = parseInt(m[1], 10);
+    const x = parseInt(get('data-position-x') || '0', 10);
+    const y = parseInt(get('data-position-y') || '0', 10);
+    const w = parseInt(get('data-measurement-x') || '1', 10);
+    const h = parseInt(get('data-measurement-y') || '1', 10);
+    if (x > 0 && y > 0) bags[bag].push({ x, y, w, h });
+  }
+  return bags;
+}
+
+// Parser do mod=packages. Cada pacote é uma `<div class="packageItem">` com:
+//   <input name="packages[]" value="<packageId>">
+//   <div data-container-number="-<packageId>">
+//     <div ... data-content-type ... data-tooltip ... data-position-x="1" ...>
+// Em vez de delimitar o bloco por `</div></div>` (frágil — packageItem tem 5
+// fechos), pareamos `name="packages[]" value="N"` ao `<div ... data-container-number="-N">`
+// que sempre vem logo a seguir, e dali achamos o item div interno.
+export function parsePackages(html) {
+  const out = [];
+  const idRe = /<input[^>]*name="packages\[\]"[^>]*value="(\d+)"/g;
+  for (const m of html.matchAll(idRe)) {
+    const packageId = parseInt(m[1], 10);
+    // Acha o wrapper data-container-number="-<id>" iniciado depois do input.
+    const wrapperRe = new RegExp(
+      `data-container-number=["']-${packageId}["'][^>]*>\\s*(<div\\b[^>]*\\bdata-content-type=["'](\\d+)["'][^>]*>)`
+    );
+    const wrapped = html.slice(m.index).match(wrapperRe);
+    if (!wrapped) continue;
+    const tag = wrapped[1];
+    const get = (name) => {
+      const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
+      const mm = tag.match(r);
+      return mm ? mm[1] : null;
+    };
+    const contentType = parseInt(wrapped[2], 10);
+    const fromX = parseInt(get('data-position-x') || '1', 10);
+    const fromY = parseInt(get('data-position-y') || '1', 10);
+    const w = parseInt(get('data-measurement-x') || '1', 10);
+    const h = parseInt(get('data-measurement-y') || '1', 10);
+    const level = parseInt(get('data-level') || '0', 10) || null;
+    const priceGold = parseInt(get('data-price-gold') || '0', 10) || null;
+    const quality = get('data-quality');
+
+    const tooltipRaw = get('data-tooltip');
+    let name = null;
+    let healNominal = 0;
+    if (tooltipRaw) {
+      try {
+        const decoded = tooltipRaw
+          .replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
+        const parsed = JSON.parse(decoded);
+        const inner = parsed && parsed[0];
+        if (inner && inner[0]) name = String(inner[0][0] || '');
+        if (inner) {
+          const healEntry = inner.find((e) => /Usar: Cura\s+\d+/.test((e && e[0]) || ''));
+          if (healEntry) healNominal = parseInt(healEntry[0].match(/\d+/)[0], 10);
+        }
+      } catch { /* ignore */ }
+    }
+
+    out.push({
+      packageId,
+      contentType,
+      level,
+      priceGold,
+      quality: quality !== null && quality !== '' ? parseInt(quality, 10) : null,
+      name,
+      healNominal,
+      from: -packageId,
+      fromX,
+      fromY,
+      measurement: { w, h },
+    });
+  }
+  return out;
+}
+
+// Procura primeira posição (x,y) onde um item w×h cabe sem sobrepor itens já
+// no bag. Bag é 8 colunas × 5 linhas (BAG_COLS×BAG_ROWS). Retorna null se cheio.
+export const BAG_COLS = 8;
+export const BAG_ROWS = 5;
+
+export function findFreeBagSlot(occupied, w, h) {
+  const cells = new Set();
+  for (const it of occupied) {
+    for (let dy = 0; dy < it.h; dy++) {
+      for (let dx = 0; dx < it.w; dx++) {
+        cells.add(`${it.x + dx},${it.y + dy}`);
+      }
+    }
+  }
+  for (let y = 1; y + h - 1 <= BAG_ROWS; y++) {
+    for (let x = 1; x + w - 1 <= BAG_COLS; x++) {
+      let fits = true;
+      for (let dy = 0; dy < h && fits; dy++) {
+        for (let dx = 0; dx < w && fits; dx++) {
+          if (cells.has(`${x + dx},${y + dy}`)) fits = false;
+        }
+      }
+      if (fits) return { x, y };
+    }
+  }
+  return null;
 }
 
 // Merge defensivo com response JSON do servidor (heal/fight). header.* é fonte
@@ -479,6 +601,21 @@ export function parseAuctionList(html) {
     html,
     /class="description_span_right"[^>]*>\s*<b>([^<]+)<\/b>/
   );
+
+  // Faixa de levels que o jogo aceita no <select name="itemLevel">. Sempre
+  // extrair direto do HTML em vez de computar pela fórmula `auction-min-level`
+  // / `auction-max-level` — o step muda com o nível (ex: lvl 48 step=6,
+  // lvl 70 step=7) e a fórmula sozinha não dá pra reproduzir o conjunto exato
+  // que o servidor aceita. Mandar valor fora dessa lista devolve listing vazia.
+  const levelSelectMatch = html.match(/<select\s+name="itemLevel"[^>]*>([\s\S]*?)<\/select>/i);
+  const itemLevelOptions = [];
+  if (levelSelectMatch) {
+    for (const m of levelSelectMatch[1].matchAll(/<option\s+value="(\d+)"/gi)) {
+      const v = parseInt(m[1], 10);
+      if (Number.isFinite(v)) itemLevelOptions.push(v);
+    }
+  }
+  result.itemLevelOptions = itemLevelOptions;
 
   // Listings: cada <form id="auctionFormN">...</form>
   const formRe = /<form([^>]*)\bid="auctionForm(\d+)"[^>]*>([\s\S]*?)<\/form>/g;

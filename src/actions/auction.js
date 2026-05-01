@@ -1,9 +1,20 @@
 import { log } from '../log.js';
-import { isActionsEnabled, getStateView, markMyBid, getMyBidIds } from '../botState.js';
+import {
+  isActionsEnabled,
+  getStateView,
+  markMyBid,
+  getMyBidIds,
+  setLastAuctionBucket,
+  getLastAuctionBucket,
+} from '../botState.js';
 import { parseAuctionList } from '../state.js';
 import { enrichListingWithAffixes } from '../affixCatalog.js';
 import { buildComparison } from '../itemCompare.js';
 import { enrichListingWithWaste } from '../mercSuggestions.js';
+
+// Time bucket exigido pra dar LANCE (não-buyout). Regra do usuário:
+// só lança quando o leilão está perto de fechar — minimiza chance de outbid.
+const BID_REQUIRED_BUCKET = 'Curto';
 
 // Fase 1 do Painel 2: read-only.
 //
@@ -60,7 +71,25 @@ function enrichResult(result, { onlyTop = false } = {}) {
     withBids: result.listings.filter((l) => l.hasBids).length,
     myBids: result.listings.filter((l) => l.myBid).length,
   };
+  // Cache do bucket pro gate de lance (placeBid). Vale 60s por padrão (TTL em
+  // botState.getLastAuctionBucket); a UI poll mantém o valor sempre fresco.
+  setLastAuctionBucket(result.globalTimeBucket);
   return result;
+}
+
+// Faz só o GET cru e parseia o <select name="itemLevel"> + selected. Sem
+// enrichment de listing — pra popular o dropdown da UI sem rodar comparações
+// caras. Retorna `{ options: number[], selected: number|null }`.
+export async function fetchAuctionLevelOptions(client, opts = {}) {
+  const { ttype } = opts;
+  const params = { mod: 'auction' };
+  if (ttype !== undefined) params.ttype = ttype;
+  const html = await client.fetchRawHtml('/game/index.php', params);
+  const result = parseAuctionList(typeof html === 'string' ? html : '');
+  return {
+    options: result.itemLevelOptions || [],
+    selected: result.filter?.itemLevel ?? null,
+  };
 }
 
 export async function fetchAuctionList(client, opts = {}) {
@@ -93,6 +122,21 @@ export async function placeBid(client, params = {}) {
   } = params;
   if (!auctionId) return { ok: false, reason: 'missing auctionId' };
   if (!buyout && !bidAmount) return { ok: false, reason: 'bidAmount required when buyout=false' };
+
+  // Gate de bucket: só LANCE (buyout=false) é restrito. Buyout não tem risco
+  // de outbid, então roda em qualquer bucket. `getLastAuctionBucket` retorna
+  // null se o cache é mais velho que 60s — nesse caso refusamos por segurança
+  // (UI sempre poll fresca).
+  if (!buyout) {
+    const bucket = getLastAuctionBucket();
+    if (bucket !== BID_REQUIRED_BUCKET) {
+      const reason = bucket === null
+        ? `auction bucket unknown/stale — fetch leilão antes de dar lance`
+        : `auction bucket=${bucket}, lances só permitidos em ${BID_REQUIRED_BUCKET}`;
+      log.warn(`AUCTION lance rejeitado: ${reason}`);
+      return { ok: false, reason };
+    }
+  }
 
   const body = {
     auctionid: auctionId,

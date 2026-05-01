@@ -331,34 +331,37 @@ let aucOnlyMyBids = false;
 let aucView = 'listing'; // 'listing' | 'mercs'
 const auctionExpanded = new Set(); // auctionIds expandidos (preserva entre re-renders)
 
-// Popula o `<select aucItemLevel>` com opções no range visível pelo jogo
-// (auction-min-level..auction-max-level pelas fórmulas). Roda 1x na inicialização
-// — o range só muda quando o char sobe de level, e o user pode clicar ⟳ se notar.
-let auctionLevelRangeCache = null;
+// Popula o `<select aucItemLevel>` com as opções que o jogo realmente aceita,
+// extraídas do HTML do leilão (endpoint `/api/auction/level-options`). Antes
+// a gente computava pela fórmula `auction-{min,max}-level` em data/formulas.json
+// + assumia step=6, mas o step varia (ex: lvl 70 → step=7) e mandar valor fora
+// da grade do servidor faz a listing voltar vazia. Cache invalidada quando o
+// signature das opções muda — refetch automático após level up.
+let auctionLevelOptionsCache = null;  // string "52,59,66,73,80"
+function syncAuctionLevelDropdown(options, opts = {}) {
+  if (!Array.isArray(options) || options.length === 0) return;
+  const sig = options.join(',');
+  if (auctionLevelOptionsCache === sig && !opts.force) return;
+  auctionLevelOptionsCache = sig;
+  const previous = parseInt(els.aucItemLevel.value, 10);
+  els.aucItemLevel.innerHTML = options.map((l) =>
+    `<option value="${l}">Lvl ${l}+</option>`,
+  ).join('');
+  // Mantém escolha prévia se ainda válida; senão pega a default sugerida
+  // (selected do servidor) ou a opção mais baixa.
+  if (Number.isFinite(previous) && options.includes(previous)) {
+    els.aucItemLevel.value = String(previous);
+  } else if (Number.isFinite(opts.selected) && options.includes(opts.selected)) {
+    els.aucItemLevel.value = String(opts.selected);
+  } else {
+    els.aucItemLevel.value = String(options[0]);
+  }
+}
 async function ensureAuctionLevelOptions() {
-  if (auctionLevelRangeCache) return auctionLevelRangeCache;
   try {
-    const data = await fetchJson('/api/formulas/auction-level-range');
-    if (data?.min == null || data?.max == null) return null;
-    auctionLevelRangeCache = data;
-    const previous = els.aucItemLevel.value;
-    const opts = [];
-    // Steps de 6: bate com a granularidade tradicional de tiers do jogo.
-    const stepStart = Math.max(1, Math.floor(data.min / 6) * 6);
-    for (let l = stepStart; l <= data.max; l += 6) {
-      if (l >= data.min) opts.push(l);
-    }
-    if (!opts.includes(data.max)) opts.push(data.max);
-    if (!opts.includes(data.min)) opts.unshift(data.min);
-    els.aucItemLevel.innerHTML = opts.map((l) =>
-      `<option value="${l}">Lvl ${l}+</option>`,
-    ).join('');
-    // Default: o min level (mais permissivo). Mantém escolha prévia se ainda válida.
-    if (previous && opts.includes(parseInt(previous, 10))) {
-      els.aucItemLevel.value = previous;
-    } else {
-      els.aucItemLevel.value = String(data.min);
-    }
+    const params = aucTtype ? `?ttype=${encodeURIComponent(aucTtype)}` : '';
+    const data = await fetchJson(`/api/auction/level-options${params}`);
+    syncAuctionLevelDropdown(data?.options, { selected: data?.selected });
     return data;
   } catch (e) {
     return null;
@@ -406,6 +409,7 @@ async function refreshMercSuggestionsView() {
 async function refreshAuction() {
   els.btnRefreshAuction.disabled = true;
   try {
+    await ensureAuctionLevelOptions();
     if (aucView === 'mercs') {
       await refreshMercSuggestionsView();
     } else {
@@ -611,6 +615,11 @@ let lastAuctionData = null;
 
 function renderAuction(data) {
   lastAuctionData = data;
+  // Toda resposta do leilão já traz `itemLevelOptions` parseado do HTML cru —
+  // aproveita pra manter o dropdown em dia sem precisar de outro fetch.
+  if (data?.itemLevelOptions?.length) {
+    syncAuctionLevelDropdown(data.itemLevelOptions, { selected: data.filter?.itemLevel ?? null });
+  }
   const t = data.totals || {};
   let listings = data.listings;
   if (aucOnlyUpgrades) {

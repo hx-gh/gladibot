@@ -25,6 +25,10 @@ const botState = {
   logs: [],                  // ring buffer of { ts, level, msg }
   myBidAuctionIds: new Set(), // IDs onde demos lance via UI nessa sessão.
                               // Complementa o parser (sem sample pós-bid real).
+  lastAuctionBucket: null,    // 'Curto' | 'Médio' | 'Longo' | null. Atualizado
+                              // por fetchAuctionList; usado pra gatear lances
+                              // (só permitidos em 'Curto', regra do usuário).
+  lastAuctionBucketAt: null,  // ms epoch — pra invalidar leitura velha.
 };
 
 export function getStateView() {
@@ -121,6 +125,17 @@ export function markMyBid(auctionId) {
 
 export function getMyBidIds() {
   return botState.myBidAuctionIds;
+}
+
+export function setLastAuctionBucket(bucket) {
+  botState.lastAuctionBucket = bucket || null;
+  botState.lastAuctionBucketAt = bucket ? Date.now() : null;
+}
+
+export function getLastAuctionBucket(maxAgeMs = 60_000) {
+  if (!botState.lastAuctionBucketAt) return null;
+  if (Date.now() - botState.lastAuctionBucketAt > maxAgeMs) return null;
+  return botState.lastAuctionBucket;
 }
 
 export function getLogs({ since = 0, level } = {}) {

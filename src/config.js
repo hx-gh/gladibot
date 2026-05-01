@@ -25,6 +25,15 @@ export const config = {
   },
   heal: {
     thresholdPct: parseInt(process.env.HEAL_THRESHOLD_PCT || '20', 10),
+    autobuy: {
+      enabled: bool(process.env.AUTOBUY_HEAL_ENABLED, true),
+      target: parseInt(process.env.AUTOBUY_HEAL_TARGET || '5', 10),
+      minRatio: parseFloat(process.env.AUTOBUY_HEAL_MIN_RATIO || '3'),
+      maxBudgetPerTick: parseInt(process.env.AUTOBUY_HEAL_MAX_BUDGET_TICK || '50000', 10),
+    },
+  },
+  packages: {
+    enabled: bool(process.env.PACKAGES_ENABLED, true),
   },
   work: {
     job: parseInt(process.env.WORK_JOB || '2', 10),

@@ -3,6 +3,8 @@ import { healIfNeeded } from './actions/heal.js';
 import { attackExpedition } from './actions/expedition.js';
 import { attackDungeon } from './actions/dungeon.js';
 import { startWork, fetchWorkStatus } from './actions/work.js';
+import { openHealPackages } from './actions/packages.js';
+import { autoBuyHeal } from './actions/buyHeal.js';
 import { log } from './log.js';
 import { config } from './config.js';
 import { setSnapshot } from './botState.js';
@@ -62,10 +64,40 @@ export async function tick(client) {
   //    ficou crítico no fim do tick anterior, esperando dormir o cooldown).
   state = await maybeHeal(client, state, 'pre');
 
-  // 1b. AFK fallback — HP baixo e inventário sem comida: não dá pra batalhar
-  //     e pontos NÃO regeneram com o tempo, só HP. Mandamos pra Rapaz do
-  //     estábulo (8h) pra queimar tempo até o HP voltar. Bypass do gate de
-  //     pontos via { force: true }.
+  // 1b. Top-off de comida (pró-ativo): packages (grátis) + auto-buy no leilão.
+  //     Roda quando inventário tem menos do que `autobuy.target` itens de cura.
+  //     Antes do AFK fallback porque pode resolvê-lo (low HP sem food → busca
+  //     comida em vez de mandar pro estábulo). Erros aqui não derrubam o tick.
+  const target = config.heal.autobuy.target;
+  if ((state.inventoryFood?.length ?? 0) < target) {
+    if (config.packages.enabled) {
+      try {
+        const r = await openHealPackages(client, state.inventoryGrid, target * 2);
+        if (r.opened > 0) {
+          state = await fetchState(client);
+          setSnapshot(state);
+        }
+      } catch (e) { log.warn(`openHealPackages failed: ${e.message}`); }
+    }
+    if (config.heal.autobuy.enabled && (state.inventoryFood?.length ?? 0) < target) {
+      try {
+        const r = await autoBuyHeal(client, state, {
+          target,
+          minRatio: config.heal.autobuy.minRatio,
+          maxBudget: config.heal.autobuy.maxBudgetPerTick,
+        });
+        if (r.bought > 0) {
+          state = await fetchState(client);
+          setSnapshot(state);
+        }
+      } catch (e) { log.warn(`autoBuyHeal failed: ${e.message}`); }
+    }
+  }
+
+  // 1c. AFK fallback — HP baixo e inventário ainda sem comida (packages e
+  //     leilão não cobriram): não dá pra batalhar e pontos NÃO regeneram com
+  //     o tempo, só HP. Mandamos pra Rapaz do estábulo (8h) pra queimar tempo
+  //     até o HP voltar. Bypass do gate de pontos via { force: true }.
   const noFood = (state.inventoryFood?.length ?? 0) === 0;
   const lowHp = (state.hpPercent ?? 100) < config.heal.thresholdPct;
   if (lowHp && noFood) {

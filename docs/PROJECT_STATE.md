@@ -26,7 +26,9 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
 | `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai. `parseDungeonFights` marca `isBoss` via `<div class="map_label">Chefe`; `DUNGEON_SKIP_BOSS` (default true) filtra boss e dispara `cancelDungeon`+`restartDungeon` quando só sobra boss (DEBT-10) |
 | `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`); aceita `opts={force,jobType,hours}` pra fallback AFK |
-| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → AFK fallback (lowHp+noFood→work 8h) → exp → masm → work fallback (pontos zerados) → heal post; chama `setSnapshot` a cada parse |
+| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → top-off comida (packages + autobuy leilão) → AFK fallback se ainda lowHp+noFood → exp → masm → work fallback → heal post; chama `setSnapshot` a cada parse |
+| `src/actions/packages.js` | ✅ Pronto | `parsePackages` + `openPackages/openHealPackages`: drena `mod=packages` movendo cada item pra slot livre via `findFreeBagSlot` (8×5 grid). `from=-packageId`, mesmo POST `mod=inventory&submod=move` da cura |
+| `src/actions/buyHeal.js` | ✅ Pronto | Auto-compra de cura no leilão (`itemType=7`). Filtra `healNominal/buyoutGold ≥ AUTOBUY_HEAL_MIN_RATIO` (default 3), buyout-only, ignora listings com lance. Loop até `AUTOBUY_HEAL_TARGET` (default 5) ou budget per-tick exausto |
 | `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
 | `src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
 | `src/actions/auction.js` | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})` + `placeBid` plugado via UI (POST `/api/auction/bid`). Marca ID em `botState.myBidAuctionIds` pra parser cobrir gap até sample real |
@@ -73,6 +75,9 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Painel 2 Leilão — Bid via UI: botões Lance/Comprar por listing, parser estendido (`myBid`/`currentBid`/`formTtype`), endpoint `POST /api/auction/bid` gated, filtros "só com lances"/"só meus lances", chip ★ "MEU LANCE" e tracking local de IDs em `botState.myBidAuctionIds` (DEC-21) | 2026-04-29 |
 | Painel 3 Sugestões Mercs — merc role-weighted score (DEC-22, DEC-23) | 2026-04-30 |
 | Skip do boss da masmorra (DEBT-10) — parser detecta `<div class="map_label">Chefe`, `DUNGEON_SKIP_BOSS` (default true) filtra boss; se só sobra boss, `cancelDungeon` + `restartDungeon` automáticos no mesmo tick (volta a ter monstros normais) | 2026-04-30 |
+| Heartbeat de sessão durante sleep (DEC-24) — `interruptibleSleep` dispara `readSession` a cada [45s,135s] com jitter pra evitar redirect silencioso pro lobby durante inatividade | 2026-04-30 |
+| Dropdown do leilão parseado do HTML real (DEC-25) — `itemLevelOptions` extraído via `<select name="itemLevel">` no HTML cru, não por fórmula | 2026-04-30 |
+| Top-off de comida no orchestrator (DEC-26) — antes do AFK fallback, drena packages com `Usar: Cura X` (move pra bag via `from=-packageId`) e auto-compra no leilão (itemType=7, ratio heal/preço ≥ 3, buyout-only) até `AUTOBUY_HEAL_TARGET`. Resolve o "pause-pra-trabalhar" sem queimar pontos | 2026-05-01 |
 
 ### Em andamento
 

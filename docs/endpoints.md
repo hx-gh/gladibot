@@ -107,6 +107,41 @@ Resposta: HTML do relatório de combate.
 
 > **A capturar.** Botão "Normal" na tela "Entre na masmorra" (após boss derrotado). Via inspeção, é provavelmente um POST/GET para algo como `/game/index.php?mod=dungeon&submod=startNew&...` ou um `<form>` submit. Validar quando tivermos o curl.
 
+## Pacotes (read + abrir/mover pro inventário)
+
+### Listagem (read)
+
+```
+GET /game/index.php?mod=packages&sh=<sh>
+```
+
+HTML completo. Cada pacote é um `<div class="packageItem">` que contém:
+
+- `<input form="pa" type="hidden" name="packages[]" value="<packageId>">`
+- `<div data-no-combine="true" data-no-destack="true" data-container-number="-<packageId>">` ← **container = `-packageId` (negativo)**
+- Item div interno com `data-content-type`, `data-position-x="1"`, `data-position-y="1"`, `data-measurement-x/y` (tamanho em células do bag), `data-tooltip`, `data-price-gold`, `data-level`, `data-quality?`.
+
+Paginação: ~10 por página (`?page=N`). `parsePackages(html)` em `src/state.js` extrai a página atual. **Não-paginação automática** — se o usuário quiser drenar tudo, precisa iterar `?page=1..N` (não implementado: o orchestrator só processa página 1 por tick, suficiente pro fluxo de cura).
+
+### Abrir (mover pacote pra um bag do inventário)
+
+```
+POST /game/ajax.php?mod=inventory&submod=move
+  &from=-<packageId>      # NEGATIVO — diferencia container "package" de bag normal
+  &fromX=1&fromY=1        # constantes (cada package só tem o item em (1,1))
+  &to=<bag>               # 512=Ⅰ, 513=Ⅱ, 514=Ⅲ, 515=Ⅳ
+  &toX=<col>&toY=<row>    # célula livre (1..8 × 1..5); precisa caber w×h do item
+
+Body: a=<ts_ms>&sh=<sh>
+Content-Type: application/x-www-form-urlencoded
+```
+
+Mesmo endpoint de cura/swap — só muda `from` (negativo) e `to` (bag em vez de doll=8). Resposta é JSON com `header.*` atualizado.
+
+`actions/packages.openPackages(client, currentGrid, opts)` itera packages, acha slot livre via `findFreeBagSlot(occupied, w, h)` (varre 8×5 procurando retângulo sem overlap) e dispara um POST por package. Mutação local do `gridSnapshot` impede colisão entre iterações do mesmo tick.
+
+`openHealPackages` filtra só items com `healNominal > 0` (parseado de `Usar: Cura X` no tooltip), usado pelo orchestrator antes do AFK fallback.
+
 ## Curar (mover item da mochila para o doll)
 
 ```
@@ -307,6 +342,8 @@ qry=<echo>&itemType=<echo>&itemLevel=<echo>&itemQuality=<echo>   # ecoam o filtr
 `rubyAmount=60` aparece fixo no action — provavelmente preço de boost do server. Cada `<form>` da listagem já vem com hidden inputs montados; basta clonar e setar `bid_amount`/`buyouthd`.
 
 **Plugado via UI (2026-04-29):** `actions/auction.placeBid(client, {auctionId, ttype, buyout, bidAmount, rubyAmount, filterEcho})` reusa `client.postForm`. Gated por `isActionsEnabled()`. Endpoint UI: `POST /api/auction/bid` aceita JSON com mesmos campos. Após sucesso, marca `auctionId` em `botState.myBidAuctionIds` (Set in-memory) — usado pelo parser pra reforçar `listing.myBid` na próxima listagem. Ver DEC-21.
+
+**Gate de bucket pra LANCE (não-buyout, 2026-05-01):** `placeBid` recusa lance quando `globalTimeBucket !== "Curto"` (TTL 60s do cache em `botState.lastAuctionBucket`, atualizado por todo `fetchAuctionList`). Buyout não tem essa restrição (instantâneo, sem outbid possível). Regra do usuário: dar lance cedo (Longo/Médio) tem alto risco de outbid antes do fim — só lança quando o bucket fecha. Ver DEC-27.
 
 **`ttype` por listing (`formTtype`):** parser captura `?ttype=N` do `<form action>` de cada listing. Frontend usa esse valor (e não o da aba) ao montar o POST. Aba mercenário usa URL `?ttype=3`, mas os forms internos vêm com `ttype=2` — divergência confirmada no sample (linha 826 de leilao1.html).
 

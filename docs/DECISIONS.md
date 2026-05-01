@@ -388,3 +388,56 @@ Bug correlato descoberto: as keys `'cura crítica'`, `'bloqueio'`, `'bônus de b
 - *Pedir o user configurar role manualmente por merc*: friction inútil; user já mapeou a ordem posicional uma vez (essa decisão).
 
 **Consequências:** Score agora reflete vocação real do merc — médico não recebe sugestão de armadura física; killer não recebe sugestão de cura. Keys de `STAT_VALUE_WEIGHT` corrigidas (canônicas). UI ganha badge colorida por role no header de cada merc. Se a ordem dos mercs mudar in-game, `ROLE_BY_POSITION` precisa ser atualizado (constante simples).
+
+---
+
+### [DEC-24] Heartbeat de sessão durante sleep pra evitar redirect silencioso pro lobby
+
+**Data:** 2026-04-30
+**Contexto:** Após mudanças de rede ou inatividade (cooldown 177s ou work 8h), o servidor Gameforge pode expirar a sessão silenciosamente. GET requests mantêm a URL e permissões mais altas; POSTs com headers XHR em algumas combinações caem numa rota interna que redireciona pra `browsergamelobby` (response é 200 com HTML, não 401/403 — client retry nunca dispara). A listagem do leilão fica vazia, sem erro detectável. Sintoma reportado: dropdown do leilão volta vazio depois de mudar filtro durante sleep.
+**Decisão:** `interruptibleSleep` em `src/index.js` agora recebe `(seconds, stopRef, page, session)` e dispara `readSession(page)` periodicamente — janela [45s, 135s] com jitter uniforme pra mascarar como bot (evita padrão suspeito de exatamente 90s). Cada heartbeat sucesso atualiza `session.sh` e `session.csrf` in-place. Check de segurança: só dispara se sobram >= 5s de sleep — próximo ao fim, o tick natural já vai navegar e renovar.
+**Alternativas rejeitadas:**
+- *Desligar o bot 24/7 (worker modelo)*: user quer 24/7 automático.
+- *Sempre refazer login a cada tick*: custoso, expõe user a captchas/2FA.
+- *Heartbeat fixo de 60s*: padrão óbvio de bot; jitter reduz detecção.
+**Consequências:** Sleep de cooldown longo agora mantém sessão fresca. POSTs que dependem de CSRF válido (filtro do leilão, bids, training) deixam de cair silenciosamente no lobby. Tick posterior recupera normalmente.
+
+---
+
+### [DEC-25] Dropdown do leilão extraído do HTML real `<select>`, não computado por fórmula
+
+**Data:** 2026-04-30
+**Contexto:** `src/formulas.json` contém `"auction-min-level"` e `"auction-max-level"` que aplicam matemática fixa: `min = char.level − 6`, `max = char.level + 6`, subdividos em steps. O code anterior (`auctionLevelRange()`) geraba opções via pura aritmética. Problema: step varia conforme nível. Char lvl 70 (step=7 real do jogo) gerava opções `[52,59,66,73,80]`; code gerava `[48,54,60,66,72,78,84]` — fora da grade aceita pelo servidor.
+**Decisão:** `parseAuctionList(html)` agora extrai `itemLevelOptions: number[]` via regex do `<select name="itemLevel">` no HTML cru. Novo helper `fetchAuctionLevelOptions(client, { ttype })` em `src/actions/auction.js` faz GET puro pra capturar o `<select>` (sem enrichment). Endpoint `GET /api/auction/level-options?ttype=...` em `ui/server.js` o expõe. UI (`app.js`) substituiu cache baseado em fórmula (`auctionLevelRangeCache`) por cache baseado em signature (`auctionLevelOptionsCache`) — dropdown se autocorrige a cada `renderAuction` via helper `syncAuctionLevelDropdown(options, {selected})`.
+**Alternativas rejeitadas:**
+- *Manter a fórmula e aceitar opções erradas*: posting com valor invalido devolve listagem vazia, confunde usuario.
+- *Recalcular via backend do bot*: step é dado próprio do jogo, frágil de reproduzir. HTML é fonte de verdade.
+**Consequências:** Dropdown sempre exato — não há divergência entre UI e server. Parser ganha novo campo `itemLevelOptions` que a UI consome diretamente. `/api/auction/level-options` é endpoint "puro" — pode ser removido se a UI passar a ler a opção do response de `/api/auction` (onde já vem `itemLevelOptions`).
+
+---
+
+### [DEC-26] Top-off de cura via packages + autobuy pró-ativo no leilão
+
+**Data:** 2026-05-01
+**Contexto:** AFK fallback (DEC-16) manda o char pro estábulo 8h quando HP cai com inventário sem comida. Problema: pontos de exp/dung NÃO regeneram durante o trabalho — bot fica idle 8h queimando ciclo onde poderia estar farmando ouro/exp. O usuário tem 2 fontes de comida não-aproveitadas: (a) packages do servidor (drops da masmorra empacotados), (b) leilão de NPCs (itemType=7=Cura) onde food costuma ter ratio gold/HP barato.
+**Decisão:** Antes do AFK fallback, orchestrator tenta encher o inventário até `AUTOBUY_HEAL_TARGET` (default 5):
+1. **Packages** (`actions/packages.openHealPackages`): drena os com `Usar: Cura X` no tooltip via mesmo POST `mod=inventory&submod=move` (DEC: `from=-packageId` negativo identifica container "package"). Slot livre achado por `findFreeBagSlot(occupied, w, h)` num grid 8×5.
+2. **Auction autobuy** (`actions/buyHeal.autoBuyHeal`): só se ainda faltar comida. Filtra `itemType=7`, ignora listings com lance, exige `healNominal/buyoutGold ≥ minRatio` (default 3 — abaixo disso não vale a pena). Buyout-only (lance demora horas; cura é "agora"). Ordena por healNominal desc (encher rápido). Budget per-tick limitado por `AUTOBUY_HEAL_MAX_BUDGET_TICK` (default 50k ouro).
+**Alternativas rejeitadas:**
+- *Drenar todos os packages indiscriminadamente*: enche bag com lixo (Pó amarelo, Moedas) e empurra comida real pra fora.
+- *Lance em vez de buyout*: comida é necessidade imediata; lance de 24h não resolve o "low HP agora".
+- *Sniper de subvalorizados pré-emptivo*: complica auto-buy com cache + execução assíncrona; fora do MVP. Aqui é só "compre agora se vale a pena".
+**Consequências:** AFK fallback vira último recurso. Packages drenam free (custo zero) primeiro, leilão é o backup pago. Loops de batalha ficam mais contínuos. Bug potencial: se `inventoryGrid` vier desatualizado (raça com tick anterior), POSTs de move podem retornar erro do servidor — caímos no `try/catch` do orchestrator (warn + continua). Slot finder não considera `data-content-size` (stack) — items food ficam todos como 1×1 e não tentam stackar com existing food (cada um ocupa 1 célula).
+
+---
+
+### [DEC-27] Lances no leilão só permitidos com `globalTimeBucket = "Curto"`
+
+**Data:** 2026-05-01
+**Contexto:** O leilão Gladiatus mostra um único timer global por filtro (`<span class="description_span_right">Curto/Médio/Longo</span>`) — quanto tempo falta pro batch fechar. Lances dados em "Longo" ficam expostos a outbid por horas; em "Curto" o leilão fecha logo e o lance dificilmente vira. Buyout é instantâneo (sem outbid possível) então não tem restrição.
+**Decisão:** `actions/auction.placeBid` recusa requests com `buyout=false` quando o bucket cacheado em `botState.lastAuctionBucket` não é "Curto" (ou está stale, TTL 60s). Cache é atualizado por todo `fetchAuctionList` (UI poll + autoBuyHeal). Buyout não passa por essa checagem. Constante `BID_REQUIRED_BUCKET` em `actions/auction.js` permite mudar a regra (ex: aceitar Médio também) sem mexer em chamadores.
+**Alternativas rejeitadas:**
+- *Pré-fetch dentro do placeBid*: latência extra em cada clique de UI. O cache via fetchAuctionList resolve sem custo (UI já poll regularmente).
+- *Confiar em `bucket` enviado pelo cliente*: spoofable e desnecessário (UI é local-only mas a regra fica mais robusta server-side).
+- *Aplicar gate também em buyout*: comprado tem lock instantâneo, não há razão pra restringir — usuário foi explícito sobre "lances".
+**Consequências:** `myBidAuctionIds` (DEC-21) cresce só quando bucket é "Curto", reduzindo lances "perdidos". UI deve mostrar `globalTimeBucket` proeminentemente (já mostra) pra usuário entender o gate. Edge case: se a UI ficar 60s+ sem fetchAuctionList (raro: poll de 2s), o cache expira e o próximo lance é refused com `bucket unknown/stale` — usuário re-abre a aba e tenta de novo.

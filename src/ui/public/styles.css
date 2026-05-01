@@ -868,6 +868,8 @@ body {
 .char-buffs {
   margin: 0;
   padding: 6px 8px;
+  max-height: 96px;
+  overflow: auto;
 }
 .char-header {
   display: flex;

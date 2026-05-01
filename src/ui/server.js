@@ -14,7 +14,7 @@ import {
   isActionsEnabled,
 } from '../botState.js';
 import { fetchTrainingStatus, trainSkill } from '../actions/training.js';
-import { fetchAuctionList, placeBid } from '../actions/auction.js';
+import { fetchAuctionList, fetchAuctionLevelOptions, placeBid } from '../actions/auction.js';
 import { fetchAllCharacters } from '../actions/characters.js';
 import { persistCharacters, readAllCharacters } from '../db.js';
 import { buildSuggestions } from '../mercSuggestions.js';
@@ -228,6 +228,8 @@ export function startUiServer() {
   // Faixa de level visível no leilão pelo jogo, derivada das fórmulas
   // `auction-min-level` / `auction-max-level` em data/formulas.json. Aceita
   // `?level=N` ou usa o level do snapshot do char ativo se omitido.
+  // NOTA: pra popular o <select> da UI, use `/api/auction/level-options` —
+  // o jogo usa step variável (não 6) que a fórmula sozinha não reproduz.
   app.get('/api/formulas/auction-level-range', (req, res) => {
     let level = parseInt(req.query.level, 10);
     if (!Number.isFinite(level)) {
@@ -236,6 +238,24 @@ export function startUiServer() {
     }
     if (!Number.isFinite(level)) return res.status(400).json({ error: 'level missing' });
     res.json(auctionLevelRange(level));
+  });
+
+  // Opções aceitas pelo <select name="itemLevel"> — extraídas direto do HTML
+  // do leilão. Use isso pra popular o dropdown da UI, é a única fonte que
+  // bate 100% com o que o servidor aceita (o step varia com o nível).
+  app.get('/api/auction/level-options', async (req, res) => {
+    const client = getClient();
+    if (!client) return res.status(503).json({ error: 'client not ready' });
+    try {
+      const ttype = req.query.ttype !== undefined && req.query.ttype !== ''
+        ? parseInt(req.query.ttype, 10)
+        : undefined;
+      const result = await fetchAuctionLevelOptions(client, { ttype });
+      res.json(result);
+    } catch (e) {
+      log.warn(`UI /api/auction/level-options failed: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Sugestões de upgrade pros mercs (Painel 3). 1 fetch único do leilão +
