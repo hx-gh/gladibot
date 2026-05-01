@@ -14,6 +14,8 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 - dotenv 16
 - Sem lib de teste por enquanto (1 dev, MVP)
 
+> **Em migração (roadmap):** monorepo TurboRepo+pnpm, TypeScript em `apps/bot` e `apps/web`, Next.js 15 App Router + Tailwind + shadcn/ui. Framework Claude com agentes tech-architect/bot-builder/code-reviewer instalado (PR 1 mergeado). Ver `docs/wip/framework-monorepo-migration.md` (scratchpad ativo — PRs 1-5). Ver DEC-28.
+
 ## Componentes
 
 | Componente | Status | Notas |
@@ -78,6 +80,7 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Heartbeat de sessão durante sleep (DEC-24) — `interruptibleSleep` dispara `readSession` a cada [45s,135s] com jitter pra evitar redirect silencioso pro lobby durante inatividade | 2026-04-30 |
 | Dropdown do leilão parseado do HTML real (DEC-25) — `itemLevelOptions` extraído via `<select name="itemLevel">` no HTML cru, não por fórmula | 2026-04-30 |
 | Top-off de comida no orchestrator (DEC-26) — antes do AFK fallback, drena packages com `Usar: Cura X` (move pra bag via `from=-packageId`) e auto-compra no leilão (itemType=7, ratio heal/preço ≥ 3, buyout-only) até `AUTOBUY_HEAL_TARGET`. Resolve o "pause-pra-trabalhar" sem queimar pontos | 2026-05-01 |
+| Framework Claude adotado (PR 1) — agentes tech-architect/bot-builder/code-reviewer, comandos /implement /audit-sync /review-pr, docs/validate-docs.sh (gate), docs/reviews/, prompt.bot.md, CLAUDE.md § Framework, CONTRIBUTING.md com Conventional Commits estritos. Nenhuma mudança em `src/`. (DEC-28) | 2026-05-01 |
 
 ### Em andamento
 

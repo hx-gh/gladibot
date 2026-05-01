@@ -431,6 +431,38 @@ Bug correlato descoberto: as keys `'cura crítica'`, `'bloqueio'`, `'bônus de b
 
 ---
 
+### [DEC-28] Re-arquitetura: monorepo + TypeScript + Next.js + framework Claude
+
+**Data:** 2026-05-01
+**Contexto:** Gladibot nasceu single-package ESM (bot + Express UI em `src/`). Com a perspectiva de hosting multi-tenant BYOK e UI de produto real (não debugging local), o stack atual torna inviável separar domínios (bot, web, shared types), adicionar TS incremental e ter CI com gates por workspace. Paralelamente, o framework de contexto Claude (agentes + comandos + doc-keeper) usado no dtp-monorepo foi testado e aprovado pelo owner.
+**Decisão:** Migrar em 5 PRs sequenciais:
+- **PR 1 (mergeado 2026-05-01):** Adotar framework Claude — agentes `tech-architect` (Opus), `bot-builder` (Sonnet), `code-reviewer` (Sonnet); comandos `/implement`, `/audit-sync`, `/review-pr`; `docs/validate-docs.sh` como gate; `docs/reviews/`; `prompt.bot.md`; `CLAUDE.md` § Framework de Trabalho; `CONTRIBUTING.md` com Conventional Commits estritos. Nenhuma mudança em `src/`.
+- **PR 2:** `chore/monorepo-skeleton` — TurboRepo + pnpm@10; `git mv src/ apps/bot/src/`; root `package.json` + `pnpm-workspace.yaml` + `turbo.json`. JS ainda.
+- **PR 3:** `refactor/bot-typescript` — `tsconfig.json` em `apps/bot`; rename `.js → .ts` incremental; `packages/shared` com tipos do snapshot.
+- **PR 4:** `feat/web-nextjs` — `apps/web` Next.js 15 App Router + Tailwind + shadcn/ui; 4 painéis em paridade; bot expõe HTTP em `:3001`; deleta `apps/bot/src/ui/`.
+- **PR 5+:** `feat/hosting-byok` — bloqueado até DEC-PEND-07..12 decididas.
+
+Toolchain: TurboRepo + pnpm@10 (paridade dtp-monorepo). Branch model: `main` (produção) + `develop` (integração); squash merge → develop; merge commit → main. Conventional Commits estritos; escopos `bot|web|shared|docs|claude|deps`. Sem `Co-Authored-By: Claude` ou footer "Generated with Claude Code".
+**Alternativas rejeitadas:**
+- *npm workspaces puro*: considerado para PR 2, mas TurboRepo foi decidido para paridade com dtp-monorepo e cache de build futura.
+- *Manter single-package + React via CDN*: não escala para hosting multi-tenant (sem SSR, sem rotas, sem auth).
+- *Pages Router*: Next.js App Router é o padrão em 2026 para novos projetos.
+**Consequências:** Custo de migração ~4 PRs antes de qualquer feature nova. PR 2 e PR 3 são zero-risco-de-produto (só estrutura). PR 4 abre possibilidade de SSR, auth, e futura UI de hosting. Stack final: TurboRepo + pnpm + TS + Next.js 15 + Tailwind + shadcn/ui. `docs/wip/framework-monorepo-migration.md` é o scratchpad ativo — preserve até PR 5 ser mergeado.
+
+---
+
+### [DEC-29] Hosting BYOK como modelo comercial alvo
+
+**Data:** 2026-05-01
+**Contexto:** Owner identificou mercado: todos os servidores Gladiatus (não só BR62 Speed x5). Modelo de hosting implica: servidor gerencia sessões dos clientes, roda o bot, fornece UI web. Dois modelos avaliados: (a) BYOK — cliente fornece o próprio cookie de sessão Gladiatus via UI; servidor não armazena credenciais Google; bot roda só com HTTP; (b) Hosting full — servidor roda Playwright com credenciais Google armazenadas. Preço-alvo: R$ 50,00/mês.
+**Decisão:** **BYOK é o modelo preferido** (pendente confirmação no plano técnico do PR 5). Razões: elimina risco LGPD/GDPR de armazenar senhas Google; elimina custo de Playwright em prod (só HTTP por usuário); regra arquitetural #3 do CLAUDE.md (login manual, sem auto-login) fica intacta; detecção anti-bot reduzida (sem Playwright headless centralizado). Implicações de produto: `BASE_URL` por tenant; parser tolerante a variações entre servidores.
+**Alternativas rejeitadas:**
+- *Hosting full com credenciais Google armazenadas*: LGPD/GDPR obrigatórios, risco de ban multiplicado, custo de infra ~300-500MB RAM/Playwright por usuário.
+- *Self-hosted SaaS (cliente roda Docker próprio)*: elimina receita recorrente de hosting.
+**Consequências:** PR 5+ bloqueado até DEC-PEND-07..12 decididas (auth multi-tenant, billing Stripe, compliance TOS Gladiatus, anti-bot detection, custo operacional). Implementação pelo agente `tech-architect` via `/implement hosting-saas`. Mercado expandido de BR62 para todos os servidores Gladiatus — parser e config assumem multi-servidor desde PR 4.
+
+---
+
 ### [DEC-27] Lances no leilão só permitidos com `globalTimeBucket = "Curto"`
 
 **Data:** 2026-05-01
