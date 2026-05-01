@@ -2,12 +2,14 @@ import { config } from '../config.js';
 import { log } from '../log.js';
 import { isActionsEnabled } from '../botState.js';
 import { parseWork } from '../state.js';
+import type { GladiatusClient } from '../client.js';
+import type { BotSnapshot, WorkStatus } from '@gladibot/shared';
 
 // HTTP-only GET so we don't navigate the bot's main page (which would race
 // with the orchestrator's overview navigation in subsequent ticks).
-export async function fetchWorkStatus(client) {
+export async function fetchWorkStatus(client: GladiatusClient): Promise<WorkStatus> {
   const html = await client.fetchRawHtml('/game/index.php', { mod: 'work' });
-  return parseWork(html);
+  return parseWork(html as string);
 }
 
 // Job IDs (mod=work):
@@ -16,12 +18,18 @@ export async function fetchWorkStatus(client) {
 //   4 Talhante (1-3h)            5 Pescador (4-10h)
 //   6 Padeiro (1-4h)             7 Ferreiro (12h)
 //   8 Mestre Ferreiro (6h, premium)
-const JOB_HOUR_LIMITS = {
+const JOB_HOUR_LIMITS: Record<number, [number, number]> = {
   0: [1, 24], 1: [1, 4], 2: [1, 8], 3: [1, 6], 4: [1, 3],
   5: [4, 10], 6: [1, 4], 7: [12, 12], 8: [6, 6],
 };
 
-export async function startWork(client, state, opts = {}) {
+interface WorkOpts {
+  force?: boolean;
+  jobType?: number;
+  hours?: number;
+}
+
+export async function startWork(client: GladiatusClient, state: BotSnapshot, opts: WorkOpts = {}): Promise<{ acted: boolean; reason?: string; raw?: unknown }> {
   if (!isActionsEnabled()) {
     return { acted: false, reason: 'actions disabled' };
   }

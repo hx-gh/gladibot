@@ -32,7 +32,7 @@ import { EQUIPPED_SLOTS } from './state.js';
 import { readEquippedBlock } from './db.js';
 
 // PT-BR → chave canônica do snapshot.stats. Bate com STAT_KEY_PT_TO_EN do client.
-const STAT_KEY_PT_TO_EN = {
+const STAT_KEY_PT_TO_EN: Record<string, string> = {
   'força': 'strength',
   'destreza': 'dexterity',
   'agilidade': 'agility',
@@ -57,7 +57,7 @@ const STAT_KEY_PT_TO_EN = {
 //   +100 armadura              ≈ 10 score
 //   +50 dano (range)           ≈ 20 score
 //   +5% crítico                ≈  7.5 score
-const STAT_VALUE_WEIGHT = {
+const STAT_VALUE_WEIGHT: Record<string, number> = {
   'força': 1.0, 'destreza': 1.0, 'agilidade': 1.0,
   'constituição': 1.0, 'carisma': 1.0, 'inteligência': 1.0,
   'dano': 0.4,
@@ -84,7 +84,7 @@ const STAT_VALUE_WEIGHT = {
 //   killer  — dano, dano crítico, força/destreza (DPS puro)
 //
 // Default fica STAT_VALUE_WEIGHT pra char sem role classificada.
-const ROLE_WEIGHT_OVERRIDES = {
+const ROLE_WEIGHT_OVERRIDES: Record<string, Record<string, number>> = {
   medico: {
     'cura': 1.0,
     'valor de cura crítica': 2.5,
@@ -136,7 +136,22 @@ const ROLE_WEIGHT_OVERRIDES = {
 // Ordem fixa de roles por posição da merc (usuário mapeou em 2026-04-30).
 // Aplicada quando inferência por nome/equipamento falha. Posição = index na
 // lista de MERCS REAIS (doll != 1), ordenados por doll asc.
-const ROLE_BY_POSITION = ['medico', 'killer', 'tanque', 'killer'];
+const ROLE_BY_POSITION: string[] = ['medico', 'killer', 'tanque', 'killer'];
+
+type MercRole = 'medico' | 'killer' | 'tanque' | null;
+
+interface CharEquipItem {
+  stats?: Array<{ label?: string | null }> | null;
+}
+
+interface Char {
+  doll: number;
+  role?: string | null;
+  level?: number | null;
+  name?: string | null;
+  stats?: Record<string, { total?: number | null; max?: number | null; itemsMax?: number | null } | null> | null;
+  equipped?: CharEquipItem[] | null;
+}
 
 // Detecta role pelo nome da role do char ou pelas stats do equipamento.
 // Druida → medico; presença de bloqueio/ameaça em múltiplas peças → tanque;
@@ -145,7 +160,7 @@ const ROLE_BY_POSITION = ['medico', 'killer', 'tanque', 'killer'];
 // Contagem por PEÇA (não por stat): uma armadura defensiva pode ter 3 stats
 // de bloqueio/ameaça/evoluindo numa peça só — sem o `break`, killer com 1 peça
 // defensiva era classificado como tanque.
-function inferRoleFromChar(char) {
+function inferRoleFromChar(char: Char): MercRole {
   const roleName = (char.role || '').toLowerCase();
   if (/druida|sacerdote|curandeir|m[eé]dico/.test(roleName)) return 'medico';
   let healPieces = 0;
@@ -169,32 +184,32 @@ function inferRoleFromChar(char) {
 // `mercPosition` é o index entre MERCS reais (doll != 1). Pra doll=1 (player
 // main), não aplica ROLE_BY_POSITION — usa só inferência por nome/stats e cai
 // pra null (= sem override; usa STAT_VALUE_WEIGHT puro + roleStatBoost).
-export function resolveMercRole(char, mercPosition) {
+export function resolveMercRole(char: Char, mercPosition: number): MercRole {
   if (char.doll === 1) {
     return inferRoleFromChar(char); // pode ser null
   }
-  return inferRoleFromChar(char) || ROLE_BY_POSITION[mercPosition] || 'killer';
+  return inferRoleFromChar(char) || (ROLE_BY_POSITION[mercPosition] as MercRole) || 'killer';
 }
 
 // Cap de retornos: stat com magnitude muito acima do "típico" tem returns
 // diminuídos (50% após o cap). Evita item especial com saúde +1000 dominar
 // o ranking.
-const STAT_DELTA_CAP = {
+const STAT_DELTA_CAP: Record<string, number> = {
   'saúde': 400,
   'cura': 400,
   'armadura': 200,
   'dano': 100,
 };
 
-function statValueWeight(prefix, role) {
+function statValueWeight(prefix: string, role: MercRole): number {
   if (role && ROLE_WEIGHT_OVERRIDES[role]) {
-    const overrides = ROLE_WEIGHT_OVERRIDES[role];
-    if (prefix in overrides) return overrides[prefix];
+    const overrides = ROLE_WEIGHT_OVERRIDES[role]!;
+    if (prefix in overrides) return overrides[prefix]!;
   }
   return STAT_VALUE_WEIGHT[prefix] ?? 0.5;
 }
 
-function capDelta(prefix, delta) {
+function capDelta(prefix: string, delta: number): number {
   const cap = STAT_DELTA_CAP[prefix];
   if (!cap || Math.abs(delta) <= cap) return delta;
   const overflow = Math.abs(delta) - cap;
@@ -206,7 +221,7 @@ function capDelta(prefix, delta) {
 // proxy da vocação. Stat com itemsMax alto = char foca aí (e provavelmente
 // quer mais). Stat com itemsMax 0 = irrelevante pro role (ex: Inteligência
 // num lutador puro).
-function roleStatBoost(charStats, prefix) {
+function roleStatBoost(charStats: Char['stats'], prefix: string): number {
   if (!charStats) return 1.0;
   const enKey = STAT_KEY_PT_TO_EN[prefix];
   if (!enKey) return 1.0; // dano/armor/saúde: sem boost de vocação
@@ -218,15 +233,24 @@ function roleStatBoost(charStats, prefix) {
   return 0.25;             // praticamente irrelevante pro role
 }
 
+interface ScoredRow {
+  key: string;
+  sign: number;
+  wasted?: boolean;
+  deltaNum?: number | null;
+  itemValue?: number | null;
+  equippedValue?: number | null;
+}
+
 // Marca rows com `wasted` quando vão pra stat já no cap do char.
 // Retorna contagem pra summary.
-function annotateWaste(rows, charStats) {
+function annotateWaste(rows: ScoredRow[], charStats: Char['stats']): { wastedUps: number; usefulUps: number; atCap: string[] } {
   let wastedUps = 0;
   let usefulUps = 0;
-  const atCap = [];
+  const atCap: string[] = [];
   for (const r of rows) {
     if (r.sign <= 0) continue;
-    const prefix = (r.key.split('-')[0] || '').toLowerCase();
+    const prefix = (r.key.split('-')[0] ?? '').toLowerCase();
     const charKey = STAT_KEY_PT_TO_EN[prefix];
     if (!charKey) { usefulUps++; continue; }
     const s = charStats?.[charKey];
@@ -247,11 +271,11 @@ function annotateWaste(rows, charStats) {
 // outlier (saúde +1000) dominar o ranking.
 //
 // `role` (opcional): aplica ROLE_WEIGHT_OVERRIDES por cima de STAT_VALUE_WEIGHT.
-function computeWeightedScore(rows, charStats, lvlDiff, topBonus, role = null) {
+function computeWeightedScore(rows: ScoredRow[], charStats: Char['stats'], lvlDiff: number, topBonus: number, role: MercRole = null): number {
   let weighted = 0;
   for (const r of rows) {
     if (r.wasted) continue;
-    const prefix = (r.key.split('-')[0] || '').toLowerCase();
+    const prefix = (r.key.split('-')[0] ?? '').toLowerCase();
     const w = statValueWeight(prefix, role);
     const boost = roleStatBoost(charStats, prefix);
     const rawDelta = r.deltaNum != null
@@ -268,7 +292,25 @@ function computeWeightedScore(rows, charStats, lvlDiff, topBonus, role = null) {
 // ≈ 1500 gold no servidor BR62 (estimativa empírica — refinar se vier dado).
 const RUBY_TO_GOLD = 1500;
 
-function candidateCost(c) {
+interface ListingCandidate {
+  buyoutGold?: number | null;
+  buyoutRubies?: number | null;
+  minBid?: number | null;
+  prefixCatalog?: { top?: boolean } | null;
+  suffixCatalog?: { top?: boolean } | null;
+  itemType?: number | null;
+  level?: number | null;
+  auctionId?: number;
+  formTtype?: number | null;
+  name?: string | null;
+  baseName?: string | null;
+  quality?: number | null;
+  buyoutAvailable?: boolean;
+  hasBids?: boolean;
+  tooltip?: { item?: { stats?: unknown[]; level?: number | null; soulbound?: string | null; name?: string | null } | null } | null;
+}
+
+function candidateCost(c: ListingCandidate): number {
   const gold = c.buyoutGold ?? 0;
   const rubies = c.buyoutRubies ?? 0;
   const fallback = c.minBid ?? 0;
@@ -276,40 +318,48 @@ function candidateCost(c) {
   return cost > 0 ? cost : fallback;
 }
 
-function computeEfficiency(score, cost) {
+function computeEfficiency(score: number, cost: number): number {
   if (!cost || cost <= 0) return 0;
   return Math.round((score / (cost / 1000)) * 100) / 100; // score por 1k gold
 }
 
-function topAffixBonus(listing) {
+function topAffixBonus(listing: ListingCandidate): number {
   let bonus = 0;
   if (listing.prefixCatalog?.top) bonus += 1;
   if (listing.suffixCatalog?.top) bonus += 1;
   return bonus;
 }
 
-export const SLOT_TO_ITEMTYPE = {
+export const SLOT_TO_ITEMTYPE: Record<string, number> = {
   helmet: 4, weapon: 1, offhand: 2, armor: 3,
   ring1: 6, ring2: 6, pants: 5, boots: 8, amulet: 9,
   // pants = 5 (bracers/luvas/calça); confirmed via data-basis=5-X em
   // paperdoll equipped. type=11 é consumível (Frasco/Falcão/Ampulheta).
 };
 
-const SLOT_LABEL = Object.fromEntries(EQUIPPED_SLOTS.map((d) => [d.slot, d.label]));
+const SLOT_LABEL: Record<string, string> = Object.fromEntries(EQUIPPED_SLOTS.map((d) => [d.slot, d.label]));
 
-function qualityPenalty(quality) {
+function qualityPenalty(quality: number | null | undefined): number {
   if (quality === null || quality === undefined) return 5;
   if (quality === 0) return 3;
   return 0;
 }
 
-export function rankSlots(char) {
-  const equippedByslot = {};
+interface EquippedSlotItem {
+  slot: string;
+  empty?: boolean;
+  level?: number | null;
+  quality?: number | null;
+  name?: string | null;
+}
+
+export function rankSlots(char: Char & { equipped?: EquippedSlotItem[] | null }): Array<{ slot: string; priority: number; current: EquippedSlotItem | null }> {
+  const equippedByslot: Record<string, EquippedSlotItem> = {};
   for (const it of char.equipped || []) equippedByslot[it.slot] = it;
-  const ranked = [];
+  const ranked: Array<{ slot: string; priority: number; current: EquippedSlotItem | null }> = [];
   for (const slot of Object.keys(SLOT_TO_ITEMTYPE)) {
     const it = equippedByslot[slot];
-    let priority;
+    let priority: number;
     if (!it || it.empty) {
       priority = 999;
     } else {
@@ -325,18 +375,18 @@ export function rankSlots(char) {
 // Helper genérico pro Painel 2: enriquece um listing já com `comparison.rows`
 // vindas do `buildComparison` original aplicando waste check + score
 // magnitude-weighted contra o snapshot do char ativo. Mutates `listing`.
-export function enrichListingWithWaste(listing, charStats) {
-  const cmp = listing.comparison;
+export function enrichListingWithWaste(listing: Record<string, unknown>, charStats: Char['stats']): void {
+  const cmp = listing.comparison as { rows?: ScoredRow[]; summary?: Record<string, unknown> } | null;
   if (!cmp || !Array.isArray(cmp.rows)) return;
   const waste = annotateWaste(cmp.rows, charStats);
-  const lvlDiff = cmp.summary?.lvlDiff ?? 0;
-  const topBonus = topAffixBonus(listing);
+  const lvlDiff = (cmp.summary?.['lvlDiff'] as number | undefined) ?? 0;
+  const topBonus = topAffixBonus(listing as ListingCandidate);
   const weightedScore = computeWeightedScore(cmp.rows, charStats, lvlDiff, topBonus);
   const score = Math.round(weightedScore * 10) / 10;
   const summary = {
     ...(cmp.summary || {}),
     up: waste.usefulUps,
-    rawUp: cmp.summary?.up ?? waste.usefulUps + waste.wastedUps,
+    rawUp: (cmp.summary?.['up'] as number | undefined) ?? waste.usefulUps + waste.wastedUps,
     wastedUps: waste.wastedUps,
     atCap: waste.atCap,
     topAffixBonus: topBonus,
@@ -346,7 +396,12 @@ export function enrichListingWithWaste(listing, charStats) {
   cmp.summary = summary;
 }
 
-export function buildSuggestions(allListings, mercs, options = {}) {
+interface BuildSuggestionsOptions {
+  topPerSlot?: number;
+  slotsToConsider?: number;
+}
+
+export function buildSuggestions(allListings: ListingCandidate[], mercs: Array<Char & { equipped?: EquippedSlotItem[] | null }>, options: BuildSuggestionsOptions = {}): unknown[] {
   const topPerSlot = options.topPerSlot ?? 3;
   const slotsToConsider = options.slotsToConsider ?? 4;
 
@@ -356,7 +411,7 @@ export function buildSuggestions(allListings, mercs, options = {}) {
     const position = char.doll === 1 ? -1 : mercIndex++;
     const mercRole = resolveMercRole(char, position);
     const ranked = rankSlots(char).slice(0, slotsToConsider);
-    const suggestions = [];
+    const suggestions: unknown[] = [];
     for (const r of ranked) {
       const itemType = SLOT_TO_ITEMTYPE[r.slot];
       const baseline = readEquippedBlock(char.doll, r.slot);
@@ -368,17 +423,17 @@ export function buildSuggestions(allListings, mercs, options = {}) {
         (char.level ?? 0) - 14,
       );
 
-      const scored = [];
+      const scored: unknown[] = [];
       for (const l of allListings) {
         if (l.itemType !== itemType) continue;
         const itemBlock = l.tooltip?.item;
         if (!itemBlock) continue;
-        if (Number.isFinite(l.level) && l.level < itemLevelMin) continue;
+        if (Number.isFinite(l.level) && l.level! < itemLevelMin) continue;
 
-        const rows = pairStats(itemBlock, baseline);
+        const rows = pairStats(itemBlock as Parameters<typeof pairStats>[0], baseline as Parameters<typeof pairStats>[1]);
         const itemLevel = itemBlock.level ?? l.level ?? null;
         const equippedLevel = baseline?.level ?? 0;
-        const rawSummary = summarizeRows(rows, true, { itemLevel, equippedLevel });
+        const rawSummary = summarizeRows(rows, true, { itemLevel: itemLevel ?? undefined, equippedLevel });
 
         // 1. Marca rows wasted conforme o cap do merc.
         const waste = annotateWaste(rows, char.stats);
@@ -434,7 +489,7 @@ export function buildSuggestions(allListings, mercs, options = {}) {
       }
 
       // Sort: score primário, eficiência como tiebreaker.
-      scored.sort((a, b) => {
+      (scored as Array<{ summary: { score?: number; efficiency?: number } }>).sort((a, b) => {
         const ds = (b.summary.score ?? 0) - (a.summary.score ?? 0);
         if (Math.abs(ds) > 0.5) return ds;
         return (b.summary.efficiency ?? 0) - (a.summary.efficiency ?? 0);
@@ -442,12 +497,12 @@ export function buildSuggestions(allListings, mercs, options = {}) {
 
       suggestions.push({
         slot: r.slot,
-        slotLabel: SLOT_LABEL[r.slot] || r.slot,
+        slotLabel: SLOT_LABEL[r.slot] ?? r.slot,
         priority: r.priority,
         currentName: r.current?.name ?? null,
         currentLevel: r.current?.level ?? null,
         currentQuality: r.current?.quality ?? null,
-        candidates: scored.slice(0, topPerSlot),
+        candidates: (scored as unknown[]).slice(0, topPerSlot),
       });
     }
     return {

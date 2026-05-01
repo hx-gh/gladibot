@@ -485,3 +485,25 @@ Toolchain: TurboRepo + pnpm@10 (paridade dtp-monorepo). Branch model: `main` (pr
 - *Confiar em `bucket` enviado pelo cliente*: spoofable e desnecessário (UI é local-only mas a regra fica mais robusta server-side).
 - *Aplicar gate também em buyout*: comprado tem lock instantâneo, não há razão pra restringir — usuário foi explícito sobre "lances".
 **Consequências:** `myBidAuctionIds` (DEC-21) cresce só quando bucket é "Curto", reduzindo lances "perdidos". UI deve mostrar `globalTimeBucket` proeminentemente (já mostra) pra usuário entender o gate. Edge case: se a UI ficar 60s+ sem fetchAuctionList (raro: poll de 2s), o cache expira e o próximo lance é refused com `bucket unknown/stale` — usuário re-abre a aba e tenta de novo.
+
+---
+
+### [DEC-31] TypeScript em `apps/bot` via `tsx` runtime; Fases A+B no mesmo PR
+
+**Data:** 2026-05-01
+**Contexto:** O plano original (scratchpad `bot-typescript.md`) propunha Fase A (checkJs + JSDoc, sem rename) separada da Fase B (rename `.js → .ts`). Após PR 2 (monorepo skeleton), o agente anterior completou o rename de todos os 23 arquivos em `apps/bot/src/` (exceto `ui/public/`) e instalou `tsx` como runtime loader. A decisão de juntar as fases no mesmo PR foi tomada pelo usuário antes desta sessão.
+**Decisão:** Adotar TypeScript 5 em `apps/bot` com as seguintes características:
+- Runtime via **`tsx`** (loader TS transparente, preserva imports `.js` literais resolvendo para `.ts`).
+- Rename `.js → .ts` em todos os `apps/bot/src/` **exceto** `ui/public/` (sai com PR 4 quando Next.js chegar).
+- `tsconfig.json` com `strict: true` e `noEmit: true` (sem build step, sem `dist/`).
+- `packages/shared` é **type-only** (sem runtime): único consumer válido é `import type { ... } from '@gladibot/shared'`. Nunca `import { ... }` de valor do shared — o pacote não emite JS.
+- Scripts: `tick: tsx src/index.ts --once`, `loop: tsx src/index.ts --loop`, `typecheck: tsc -p tsconfig.json`.
+**Alternativas rejeitadas:**
+- *`node --experimental-strip-types`*: exige alterar todos os imports de `.js` para `.ts` nos call-sites — churn massivo (todo import relativo muda). Tsx preserva imports `.js` literais sem mudança.
+- *`tsc --emit dist/`*: quebra DEC-30 silenciosamente — `path.resolve('data/...')` em `db.ts`, `log.ts` e `formulas.ts` ficaria relativo a `dist/`, não a `apps/bot/`. Manter `noEmit: true` preserva o CWD canônico.
+- *Fase A (checkJs) separada + Fase B depois*: risco de superfície de regressão dupla sem ganho de segurança real — PR único com ambas as fases é mais limpo dado que tsx elimina a armadilha de resolução de módulo (o risco principal da Fase B).
+**Consequências:**
+- `pnpm typecheck` (turbo: `shared` antes do `bot`) é gate obrigatório (0 erros exigido antes de commit).
+- Imports continuam com `.js` literal nos call-sites internos ao bot — tsx + NodeNext resolvem `.js → .ts` em source.
+- `ui/public/*.js` permanece JS puro até PR 4 (sai com Next.js).
+- `node:sqlite` experimental: `@types/node@22` já tem o módulo tipado; sem necessidade de `@ts-expect-error`.

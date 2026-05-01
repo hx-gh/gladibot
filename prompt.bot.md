@@ -13,27 +13,29 @@ date: 2026-05-01
 
 - Node.js 18+ (ESM, `"type": "module"`)
 - Playwright 1.49 (channel `msedge`, persistent context em `browser-data/`)
-- Express (UI atual `apps/bot/src/ui/server.js`; será trocado por Next.js em PR futuro)
-- TypeScript será adicionado no PR `refactor/bot-typescript` — até lá, JS puro com `// @ts-check` opcional
+- **TypeScript 5** com `strict: true`, `noEmit: true`, `module: NodeNext` — runtime via **`tsx`** (não `tsc --emit`, não `node --strip-types`)
+- Sem build step (`noEmit: true` é invariante). `pnpm tick` / `pnpm loop` rodam via `tsx src/index.ts`.
+- `packages/shared` — pacote type-only. **Somente `import type`** é válido; `import` de valor quebra em runtime.
+- Express (UI atual `apps/bot/src/ui/server.ts`; será trocado por Next.js em PR futuro)
 - node:sqlite (built-in) para persistência local — **não** `better-sqlite3` (build native quebra neste host)
 
 ## Arquitetura — referência rápida
 
 ```
-.env (root do repo) → apps/bot/src/config.js
+.env (root do repo) → apps/bot/src/config.ts
                                 │
                                 ▼
-              apps/bot/src/browser.js ──▶ Playwright (Edge persistent context)
+              apps/bot/src/browser.ts ──▶ Playwright (Edge persistent context)
                               │             ├─ login Google manual (1x)
                               │             └─ readSession() pega sh+csrf do DOM
                               ▼
-              apps/bot/src/client.js ──▶ page.request.get/post ──▶ Gladiatus AJAX
+              apps/bot/src/client.ts ──▶ page.request.get/post ──▶ Gladiatus AJAX
                               ▲                                      (cookies do browser)
                               │
-apps/bot/src/index.js ──▶ apps/bot/src/orchestrator.js ──▶ apps/bot/src/actions/{exp,dung,heal,work,...}.js
+apps/bot/src/index.ts ──▶ apps/bot/src/orchestrator.ts ──▶ apps/bot/src/actions/{exp,dung,heal,work,...}.ts
                                    ▲
                                    │ lê
-                            apps/bot/src/state.js (parser de overview HTML + merge JSON)
+                            apps/bot/src/state.ts (parser de overview HTML + merge JSON)
 ```
 
 Detalhe completo em `CLAUDE.md` § Arquitetura. Componente por componente em `docs/PROJECT_STATE.md`.
@@ -72,10 +74,12 @@ Mudar qualquer dessas regras exige `DEC-XX` aprovado em `docs/DECISIONS.md` **an
 
 Toda action que faz `client.post` com side-effect no servidor (gold, pontos, cooldown, equipamento) **deve** começar com:
 
-```javascript
+```typescript
 import { isActionsEnabled } from '../botState.js';
+import type { GladiatusClient } from '../client.js';
+import type { AuctionListing } from '@gladibot/shared';
 
-export async function placeBid(client, listing) {
+export async function placeBid(client: GladiatusClient, listing: AuctionListing): Promise<PlaceBidResult | null> {
   if (!isActionsEnabled()) {
     log.warn('placeBid bloqueado pelo kill switch');
     return null;
@@ -108,10 +112,10 @@ Sem essa checagem, ação pode disparar quando UI tiver pausado o bot.
 | Tipo | Lugar |
 |---|---|
 | Novo endpoint AJAX | Captar via DevTools → catalogar em `docs/endpoints.md` → implementar action |
-| Nova action | `apps/bot/src/actions/<nome>.js` |
-| Novo ramo no tick | `apps/bot/src/orchestrator.js` — respeitar ordem heal → exp → masm → work → afk fallback |
-| Novo campo do snapshot | `apps/bot/src/state.js` parser + `apps/bot/src/botState.js` shape |
-| Nova UI | hoje `apps/bot/src/ui/server.js` + `public/`; futuro `apps/web/src/app/` (Next.js App Router) |
+| Nova action | `apps/bot/src/actions/<nome>.ts` |
+| Novo ramo no tick | `apps/bot/src/orchestrator.ts` — respeitar ordem heal → exp → masm → work → afk fallback |
+| Novo campo do snapshot | `apps/bot/src/state.ts` parser + `apps/bot/src/botState.ts` shape + `packages/shared/src/snapshot.ts` se for public |
+| Nova UI | hoje `apps/bot/src/ui/server.ts` + `public/`; futuro `apps/web/src/app/` (Next.js App Router) |
 | Catálogo (afixos, fórmulas) | `apps/bot/data/<nome>.json` + validar empiricamente contra HTML real |
 
 ---
@@ -120,8 +124,8 @@ Sem essa checagem, ação pode disparar quando UI tiver pausado o bot.
 
 Antes de declarar tarefa pronta:
 
-1. **Smoke:** `pnpm tick` (do root) ou `pnpm --filter @gladibot/bot tick` sem erro fatal.
-2. **Type-check** (quando TS instalado): `pnpm --filter bot typecheck`.
+1. **Smoke:** `pnpm tick` (do root) ou `pnpm --filter @gladibot/bot tick` sem erro fatal. Runtime usa `tsx src/index.ts` via TurboRepo.
+2. **Type-check (obrigatório):** `pnpm typecheck` (root → turbo → shared antes de bot) → 0 erros. Gate ativo para todo PR desde PR 3.
 3. **Build web** (quando `apps/web` existir): `pnpm --filter web build`.
 4. **Validate docs:** `bash docs/validate-docs.sh` → 0 erros.
 5. **Doc trail:**
@@ -130,6 +134,12 @@ Antes de declarar tarefa pronta:
    - Decisão arquitetural → `docs/DECISIONS.md` (`DEC-XX`)
    - Débito → `docs/TECHNICAL_DEBT.md` (`DEBT-XX`)
    - Feature pronta → `docs/PROJECT_STATE.md`
+
+**TypeScript invariantes (PR 3 em diante):**
+- Imports literais com `.js` mesmo para arquivos `.ts` — `tsx` + NodeNext resolvem `.js → .ts`.
+- `import type` obrigatório para tudo de `@gladibot/shared` — sem `import` de valor (quebra em runtime).
+- `strict: true` global — sem `@ts-ignore`. Use `// eslint-disable-next-line @typescript-eslint/no-explicit-any` com justificativa quando `any` é inevitável em boundary com código legado.
+- `noEmit: true` é invariante — sem `dist/`, preserva DEC-30 (CWD relativo).
 
 **Iteração autônoma:** se gate falhar, diagnostique pelo output, corrija, rode de novo. Pause após 3 tentativas consecutivas com o mesmo erro.
 

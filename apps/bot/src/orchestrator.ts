@@ -1,3 +1,5 @@
+import type { BotSnapshot, WorkStatus } from '@gladibot/shared';
+import type { GladiatusClient } from './client.js';
 import { parseOverview, mergeAjaxResponse, summarizeState } from './state.js';
 import { healIfNeeded } from './actions/heal.js';
 import { attackExpedition } from './actions/expedition.js';
@@ -14,18 +16,18 @@ import { setSnapshot } from './botState.js';
 // (gold credit, status flip). 10s is generous and irrelevant on hour-scale jobs.
 const WORK_SLACK_SEC = 10;
 
-async function fetchState(client) {
+async function fetchState(client: GladiatusClient): Promise<BotSnapshot> {
   const html = await client.getHtml('/game/index.php', { mod: 'overview' });
   return parseOverview(html);
 }
 
 // Returns the number of seconds to sleep before the next tick.
 // Strategy: take the smallest active cooldown across the slots we care about.
-function sleepUntil(state) {
+function sleepUntil(state: BotSnapshot): number {
   const cds = [
     state.expedition.cooldownSec,
     state.dungeon.cooldownSec,
-  ].filter((c) => typeof c === 'number' && c > 0);
+  ].filter((c): c is number => typeof c === 'number' && c > 0);
   if (cds.length === 0) return Math.ceil(config.loop.tickMinMs / 1000);
   return Math.max(Math.ceil(config.loop.tickMinMs / 1000), Math.min(...cds));
 }
@@ -33,7 +35,7 @@ function sleepUntil(state) {
 // One tick: read state, do every action that's ready *right now*, return
 // next sleep duration. The user's clarified semantic: expedition AND dungeon
 // fire on the same tick when both are off cooldown, then we sleep.
-async function maybeHeal(client, state, label) {
+async function maybeHeal(client: GladiatusClient, state: BotSnapshot, label: string): Promise<BotSnapshot> {
   const heal = await healIfNeeded(client, state);
   if (heal.acted) {
     log.info(`  after heal (${label}):`, summarizeState(mergeAjaxResponse(state, heal.json)));
@@ -43,19 +45,19 @@ async function maybeHeal(client, state, label) {
   return state;
 }
 
-export async function tick(client) {
+export async function tick(client: GladiatusClient): Promise<number> {
   let state = await fetchState(client);
 
   // 0. Gate "trabalhando". Overview NÃO sinaliza isso — é preciso consultar
   //    mod=work. Se trabalhando, pula tudo (heal/exp/dung) e dorme até terminar.
   //    Sem esse gate, dungeon points regeneram durante o trabalho e o bot
   //    tentava atacar mesmo com personagem ocupado.
-  const work = await fetchWorkStatus(client);
+  const work: WorkStatus = await fetchWorkStatus(client);
   state.working = work;
   setSnapshot(state);
   if (work.active) {
-    log.info(`WORKING ${work.jobName || ''} — ${work.secondsLeft}s restantes; skipping actions`);
-    return Math.max(work.secondsLeft + WORK_SLACK_SEC, Math.ceil(config.loop.tickMinMs / 1000));
+    log.info(`WORKING ${work.jobName || ''} — ${work.secondsLeft ?? '?'}s restantes; skipping actions`);
+    return Math.max((work.secondsLeft ?? 0) + WORK_SLACK_SEC, Math.ceil(config.loop.tickMinMs / 1000));
   }
 
   log.info('TICK', summarizeState(state));
@@ -77,7 +79,7 @@ export async function tick(client) {
           state = await fetchState(client);
           setSnapshot(state);
         }
-      } catch (e) { log.warn(`openHealPackages failed: ${e.message}`); }
+      } catch (e) { log.warn(`openHealPackages failed: ${(e as Error).message}`); }
     }
     if (config.heal.autobuy.enabled && (state.inventoryFood?.length ?? 0) < target) {
       try {
@@ -90,7 +92,7 @@ export async function tick(client) {
           state = await fetchState(client);
           setSnapshot(state);
         }
-      } catch (e) { log.warn(`autoBuyHeal failed: ${e.message}`); }
+      } catch (e) { log.warn(`autoBuyHeal failed: ${(e as Error).message}`); }
     }
   }
 

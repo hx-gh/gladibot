@@ -1,6 +1,7 @@
 import readline from 'node:readline/promises';
 import { spawn } from 'node:child_process';
-import { GladiatusClient, SessionExpiredError } from './client.js';
+import type { Page } from 'playwright';
+import { GladiatusClient, SessionExpiredError, type Session } from './client.js';
 import { tick } from './orchestrator.js';
 import { launch, ensureLoggedIn, readSession } from './browser.js';
 import { log } from './log.js';
@@ -17,8 +18,16 @@ import {
   isPaused,
 } from './botState.js';
 
-function parseFlags(argv) {
-  const flags = { loop: false, once: false, noConfirm: false, noUi: false, noActions: false };
+interface Flags {
+  loop: boolean;
+  once: boolean;
+  noConfirm: boolean;
+  noUi: boolean;
+  noActions: boolean;
+}
+
+function parseFlags(argv: string[]): Flags {
+  const flags: Flags = { loop: false, once: false, noConfirm: false, noUi: false, noActions: false };
   for (const a of argv.slice(2)) {
     if (a === '--loop') flags.loop = true;
     if (a === '--once') flags.once = true;
@@ -30,7 +39,7 @@ function parseFlags(argv) {
   return flags;
 }
 
-function sleepMs(ms) {
+function sleepMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, Math.max(0, ms)));
 }
 
@@ -42,14 +51,19 @@ function sleepMs(ms) {
 // [45s, 135s], indistinguível de player olhando a aba a cada 1–2min.
 const HEARTBEAT_BASE_SEC = 90;
 const HEARTBEAT_JITTER_SEC = 45;
-function nextHeartbeatDelay() {
+function nextHeartbeatDelay(): number {
   const j = (Math.random() * 2 - 1) * HEARTBEAT_JITTER_SEC;
   return Math.max(30, HEARTBEAT_BASE_SEC + j);
 }
 
 // Sleep that wakes up early on tick-now request and checks pause state.
 // Polls every 500ms — fine for a UI driven by 2s polling on the other side.
-async function interruptibleSleep(seconds, stopRef, page, session) {
+async function interruptibleSleep(
+  seconds: number,
+  stopRef: { stopping: boolean },
+  page: Page | null,
+  session: Session | null
+): Promise<'stop' | 'tick-now' | 'done'> {
   const end = Date.now() + seconds * 1000;
   let nextHb = Date.now() + nextHeartbeatDelay() * 1000;
   setNextTickAt(end);
@@ -65,7 +79,7 @@ async function interruptibleSleep(seconds, stopRef, page, session) {
         session.csrf = fresh.csrf;
         log.debug('heartbeat: session refreshed');
       } catch (e) {
-        log.warn(`heartbeat refresh failed: ${e.message}`);
+        log.warn(`heartbeat refresh failed: ${(e as Error).message}`);
       }
       nextHb = Date.now() + nextHeartbeatDelay() * 1000;
     }
@@ -74,7 +88,7 @@ async function interruptibleSleep(seconds, stopRef, page, session) {
   return 'done';
 }
 
-async function awaitUserOk(prompt) {
+async function awaitUserOk(prompt: string): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     await rl.question(prompt);
@@ -83,7 +97,7 @@ async function awaitUserOk(prompt) {
   }
 }
 
-function openInBrowser(url) {
+function openInBrowser(url: string): void {
   // Cross-platform open. start "" forces Windows to treat the URL as a target
   // rather than a window title. Detached + unref so the bot doesn't block.
   try {
@@ -93,11 +107,11 @@ function openInBrowser(url) {
     const child = spawn(cmd, { shell: true, detached: true, stdio: 'ignore' });
     child.unref();
   } catch (e) {
-    log.warn(`Falha ao abrir browser: ${e.message}. Abra manualmente: ${url}`);
+    log.warn(`Falha ao abrir browser: ${(e as Error).message}. Abra manualmente: ${url}`);
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   const flags = parseFlags(process.argv);
 
   // CLI flag overrides env. Defaults to env (which defaults to true).
@@ -109,14 +123,14 @@ async function main() {
   // Spin up the UI as early as possible so the user can already see logs of
   // browser launch / login flow streaming in. UI only runs in --loop mode
   // (in --once it'd die before the user could open it).
-  let uiServer = null;
+  let uiServer: import('node:http').Server | null = null;
   if (flags.loop && !flags.noUi) {
     try {
       uiServer = await startUiServer();
       const url = `http://localhost:${config.ui.port}`;
       if (config.ui.autoOpen) openInBrowser(url);
     } catch (e) {
-      log.warn(`UI failed to start: ${e.message}. Continuing without UI.`);
+      log.warn(`UI failed to start: ${(e as Error).message}. Continuing without UI.`);
     }
   }
 
@@ -166,7 +180,7 @@ async function main() {
             client.session.csrf = fresh.csrf;
             log.debug('heartbeat (pause): session refreshed');
           } catch (e) {
-            log.warn(`heartbeat (pause) refresh failed: ${e.message}`);
+            log.warn(`heartbeat (pause) refresh failed: ${(e as Error).message}`);
           }
           nextPauseHb = Date.now() + nextHeartbeatDelay() * 1000;
         }
@@ -175,8 +189,8 @@ async function main() {
       if (stopRef.stopping) break;
 
       markTickStart();
-      let sleepSec;
-      let tickError = null;
+      let sleepSec: number | undefined;
+      let tickError: Error | null = null;
       try {
         sleepSec = await tick(client);
       } catch (e) {
@@ -184,7 +198,7 @@ async function main() {
           markTickEnd();
           throw e; // fatal — bubbles to outer catch
         }
-        tickError = e;
+        tickError = e as Error;
       } finally {
         markTickEnd();
       }
@@ -199,22 +213,22 @@ async function main() {
       if (!flags.loop || stopRef.stopping) break;
 
       log.info(`sleeping ${sleepSec}s`);
-      const reason = await interruptibleSleep(sleepSec, stopRef, gamePage, client.session);
+      const reason = await interruptibleSleep(sleepSec!, stopRef, gamePage, client.session);
       if (reason === 'tick-now') log.info('tick-now requested, waking up early');
     } while (!stopRef.stopping);
   } catch (e) {
     if (e instanceof SessionExpiredError) {
       log.error('SESSION EXPIRED beyond auto-refresh. Re-run with --once and complete login again.');
-      log.error(e.message);
+      log.error((e as Error).message);
       process.exitCode = 2;
     } else {
-      log.error('fatal:', e?.stack || e);
+      log.error('fatal:', (e as Error)?.stack || e);
       process.exitCode = 1;
     }
   } finally {
     await ctx.close().catch(() => {});
     if (uiServer) {
-      await new Promise((r) => uiServer.close(r));
+      await new Promise<void>((r) => (uiServer as import('node:http').Server).close(() => r()));
     }
     log.info('gladibot done.');
   }

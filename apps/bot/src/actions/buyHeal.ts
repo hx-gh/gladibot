@@ -1,9 +1,11 @@
+import type { BotSnapshot, AuctionListing, AuctionListResult } from '@gladibot/shared';
+import type { GladiatusClient } from '../client.js';
 import { log } from '../log.js';
 import { isActionsEnabled } from '../botState.js';
 import { fetchAuctionList, placeBid } from './auction.js';
 
 // Parse `Usar: Cura X` do array de stats do tooltip do leilão (itemType=7).
-function healNominalFromListing(listing) {
+function healNominalFromListing(listing: AuctionListing): number {
   const stats = listing?.tooltip?.item?.stats;
   if (!Array.isArray(stats)) return 0;
   for (const s of stats) {
@@ -13,11 +15,17 @@ function healNominalFromListing(listing) {
   return 0;
 }
 
+interface RankedHealListing {
+  listing: AuctionListing;
+  heal: number;
+  ratio: number;
+}
+
 // Lista candidatos elegíveis: buyout em ouro definido + healNominal/preço ≥ minRatio.
 // Ordenação: maior healNominal primeiro (encher inventário rápido). Ratio é só
 // filtro (cumprir o "vale a pena"); entre os que passam, prioriza heal absoluto.
-export function rankHealListings(listings, minRatio) {
-  const out = [];
+export function rankHealListings(listings: AuctionListing[], minRatio: number): RankedHealListing[] {
+  const out: RankedHealListing[] = [];
   for (const l of listings) {
     if (!l.buyoutGold || l.buyoutGold <= 0) continue;
     if (l.hasBids) continue; // outro player já lançou — ignora pra não competir
@@ -31,13 +39,31 @@ export function rankHealListings(listings, minRatio) {
   return out;
 }
 
+interface AutoBuyOpts {
+  target?: number;
+  minRatio?: number;
+  maxBudget?: number;
+  itemLevel?: number;
+  itemQuality?: number;
+}
+
+interface AutoBuyResult {
+  bought: number;
+  spent?: number;
+  reason?: string;
+}
+
 // Auto-compra pró-ativa: enche inventário até `target` itens, respeitando
 // `minRatio` (heal ≥ minRatio × preço) e `maxBudget` (gasto total no tick).
 //
 // `state` precisa ter `inventoryFood`, `gold`, `level`. `opts.itemLevel` é o
 // filtro do leilão (default = menor opção do <select>); deixar undefined faz
 // 1 fetch só pra descobrir.
-export async function autoBuyHeal(client, state, opts = {}) {
+export async function autoBuyHeal(
+  client: GladiatusClient,
+  state: BotSnapshot,
+  opts: AutoBuyOpts = {}
+): Promise<AutoBuyResult> {
   if (!isActionsEnabled()) return { bought: 0, reason: 'actions disabled' };
   const {
     target = 5,
@@ -58,22 +84,22 @@ export async function autoBuyHeal(client, state, opts = {}) {
   let count = currentCount;
 
   // 1ª fetch — descobre itemLevelOptions se itemLevel não veio. itemType=7 = Cura.
-  const filter = { itemType: 7, itemQuality, doll: 1 };
-  if (itemLevel !== undefined) filter.itemLevel = itemLevel;
+  const filter: Record<string, unknown> = { itemType: 7, itemQuality, doll: 1 };
+  if (itemLevel !== undefined) filter['itemLevel'] = itemLevel;
 
-  let list;
+  let list: AuctionListResult & { itemLevelOptions?: number[] };
   try {
     list = await fetchAuctionList(client, { filter });
   } catch (e) {
-    return { bought: 0, reason: `fetch failed: ${e.message}` };
+    return { bought: 0, reason: `fetch failed: ${(e as Error).message}` };
   }
   // Se o caller não passou itemLevel e o servidor selecionou um padrão alto
   // (típico em chars de level médio-alto), refaz com o menor option pra ver
   // food de nível baixo (que costuma ter melhor ratio gold/HP).
-  if (itemLevel === undefined && list.itemLevelOptions?.length > 0) {
+  if (itemLevel === undefined && list.itemLevelOptions && list.itemLevelOptions.length > 0) {
     const minLevel = Math.min(...list.itemLevelOptions);
     if (list.filter?.itemLevel !== minLevel) {
-      filter.itemLevel = minLevel;
+      filter['itemLevel'] = minLevel;
       try { list = await fetchAuctionList(client, { filter }); } catch { /* keep prior */ }
     }
   }
@@ -84,10 +110,10 @@ export async function autoBuyHeal(client, state, opts = {}) {
       return { bought, spent, reason: 'no eligible listing (ratio threshold or no buyout)' };
     }
     const { listing, heal, ratio } = ranked[0];
-    if (spent + listing.buyoutGold > maxBudget) {
+    if (spent + (listing.buyoutGold ?? 0) > maxBudget) {
       return { bought, spent, reason: `budget ${maxBudget} exceeded by next buy ${listing.buyoutGold}` };
     }
-    if ((startGold - spent) < listing.buyoutGold) {
+    if ((startGold - spent) < (listing.buyoutGold ?? 0)) {
       return { bought, spent, reason: `not enough gold (have ${startGold - spent}, need ${listing.buyoutGold})` };
     }
     log.info(
@@ -99,19 +125,19 @@ export async function autoBuyHeal(client, state, opts = {}) {
         ttype: listing.formTtype ?? 1,
         buyout: true,
         rubyAmount: 60,
-        filterEcho: { qry: '', itemType: 7, itemLevel: filter.itemLevel ?? -1, itemQuality: -1 },
+        filterEcho: { qry: '', itemType: 7, itemLevel: (filter['itemLevel'] as number | undefined) ?? -1, itemQuality: -1 },
       });
       if (!result?.ok) {
         return { bought, spent, reason: `placeBid failed: ${result?.reason || 'unknown'}` };
       }
-      spent += listing.buyoutGold;
+      spent += listing.buyoutGold ?? 0;
       bought++;
       count++;
       // O response do POST já vem parseado em result.list — usa pro próximo loop.
-      list = result.list ?? list;
+      if (result.list) list = result.list;
     } catch (e) {
-      log.warn(`autobuy heal failed: ${e.message}`);
-      return { bought, spent, reason: `placeBid threw: ${e.message}` };
+      log.warn(`autobuy heal failed: ${(e as Error).message}`);
+      return { bought, spent, reason: `placeBid threw: ${(e as Error).message}` };
     }
   }
   return { bought, spent, reason: `target ${target} reached` };

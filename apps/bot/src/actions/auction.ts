@@ -1,3 +1,5 @@
+import type { AuctionListResult, AuctionListing, AuctionFilter } from '@gladibot/shared';
+import type { GladiatusClient } from '../client.js';
 import { log } from '../log.js';
 import {
   isActionsEnabled,
@@ -25,7 +27,7 @@ const BID_REQUIRED_BUCKET = 'Curto';
 // `placeBid` é gated por kill switch e fica documentado mas DESATIVADO até a
 // fase de autobuy. Não é chamado pelo orchestrator nem pela UI ainda.
 
-const DEFAULT_FILTER = {
+const DEFAULT_FILTER: Partial<AuctionFilter> & { itemLevel?: number; itemQuality?: number; doll?: number } = {
   doll: 1,
   qry: '',
   itemLevel: 43,
@@ -33,22 +35,41 @@ const DEFAULT_FILTER = {
   itemQuality: -1,
 };
 
+interface FetchAuctionOpts {
+  ttype?: number;
+  filter?: Partial<AuctionFilter> & Record<string, unknown>;
+  onlyTop?: boolean;
+}
+
+interface EnrichedAuctionResult extends AuctionListResult {
+  totals?: {
+    visible: number;
+    topAny: number;
+    fullyClassified: number;
+    upgrades: number;
+    withBids: number;
+    myBids: number;
+  };
+}
+
 // Enriquece um result de parseAuctionList in-place: affixes, comparison, waste
 // check, reforço de myBid via tracking local, totals. Compartilhado entre
 // fetchAuctionList e placeBid (a resposta do POST de bid também é uma listing).
-function enrichResult(result, { onlyTop = false } = {}) {
+function enrichResult(result: AuctionListResult, { onlyTop = false } = {}): EnrichedAuctionResult {
   const snap = getStateView()?.snapshot ?? null;
   const charStats = snap?.stats ?? null;
   const charName = snap?.charName ?? null;
   const myIds = getMyBidIds();
 
   for (const l of result.listings) {
-    enrichListingWithAffixes(l);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    enrichListingWithAffixes(l as any);
     const cmp = buildComparison(l);
     l.category = cmp.category;
     l.comparison = cmp.comparison;
     if (l.comparison?.hasComparison && charStats) {
-      enrichListingWithWaste(l, charStats);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      enrichListingWithWaste(l as any, charStats as any);
     }
     // Resolve `myBid`: parser expõe o `bidderName` cru (link `<a mod=player>`);
     // comparamos com o nome do char ativo. Tracking local em `myIds` cobre
@@ -63,27 +84,31 @@ function enrichResult(result, { onlyTop = false } = {}) {
   if (onlyTop) {
     result.listings = result.listings.filter((l) => l.topAny);
   }
-  result.totals = {
+  const enriched = result as EnrichedAuctionResult;
+  enriched.totals = {
     visible: result.listings.length,
     topAny: result.listings.filter((l) => l.topAny).length,
-    fullyClassified: result.listings.filter((l) => l.affixCoverage === 2).length,
-    upgrades: result.listings.filter((l) => l.comparison?.summary?.isUpgrade).length,
+    fullyClassified: result.listings.filter((l) => (l.affixCoverage ?? 0) === 2).length,
+    upgrades: result.listings.filter((l) => (l.comparison as { summary?: { isUpgrade?: boolean } } | null)?.summary?.isUpgrade).length,
     withBids: result.listings.filter((l) => l.hasBids).length,
     myBids: result.listings.filter((l) => l.myBid).length,
   };
   // Cache do bucket pro gate de lance (placeBid). Vale 60s por padrão (TTL em
   // botState.getLastAuctionBucket); a UI poll mantém o valor sempre fresco.
   setLastAuctionBucket(result.globalTimeBucket);
-  return result;
+  return enriched;
 }
 
 // Faz só o GET cru e parseia o <select name="itemLevel"> + selected. Sem
 // enrichment de listing — pra popular o dropdown da UI sem rodar comparações
 // caras. Retorna `{ options: number[], selected: number|null }`.
-export async function fetchAuctionLevelOptions(client, opts = {}) {
+export async function fetchAuctionLevelOptions(
+  client: GladiatusClient,
+  opts: { ttype?: number } = {}
+): Promise<{ options: number[]; selected: number | null }> {
   const { ttype } = opts;
-  const params = { mod: 'auction' };
-  if (ttype !== undefined) params.ttype = ttype;
+  const params: Record<string, string | number | undefined | null> = { mod: 'auction' };
+  if (ttype !== undefined) params['ttype'] = ttype;
   const html = await client.fetchRawHtml('/game/index.php', params);
   const result = parseAuctionList(typeof html === 'string' ? html : '');
   return {
@@ -92,24 +117,45 @@ export async function fetchAuctionLevelOptions(client, opts = {}) {
   };
 }
 
-export async function fetchAuctionList(client, opts = {}) {
+export async function fetchAuctionList(
+  client: GladiatusClient,
+  opts: FetchAuctionOpts = {}
+): Promise<EnrichedAuctionResult> {
   const { ttype, filter, onlyTop = false } = opts;
-  const params = { mod: 'auction' };
-  if (ttype !== undefined) params.ttype = ttype;
+  const params: Record<string, string | number | undefined | null> = { mod: 'auction' };
+  if (ttype !== undefined) params['ttype'] = ttype;
 
-  let result;
+  let result: AuctionListResult;
   if (filter && Object.keys(filter).length > 0) {
-    const body = { ...DEFAULT_FILTER, ...filter };
+    const body = { ...DEFAULT_FILTER, ...filter } as Record<string, string | number | boolean | undefined | null>;
     const html = await client.postForm('/game/index.php', params, body);
     result = parseAuctionList(typeof html === 'string' ? html : '');
   } else {
     const html = await client.fetchRawHtml('/game/index.php', params);
-    result = parseAuctionList(html);
+    result = parseAuctionList(typeof html === 'string' ? html : '');
   }
   return enrichResult(result, { onlyTop });
 }
 
-export async function placeBid(client, params = {}) {
+interface PlaceBidParams {
+  auctionId?: number;
+  ttype?: number;
+  buyout?: boolean;
+  bidAmount?: number;
+  rubyAmount?: number;
+  filterEcho?: Partial<AuctionFilter> & Record<string, unknown>;
+}
+
+interface PlaceBidResult {
+  ok: boolean;
+  reason?: string;
+  list?: EnrichedAuctionResult;
+}
+
+export async function placeBid(
+  client: GladiatusClient,
+  params: PlaceBidParams = {}
+): Promise<PlaceBidResult> {
   if (!isActionsEnabled()) return { ok: false, reason: 'actions disabled' };
 
   const {
@@ -138,19 +184,19 @@ export async function placeBid(client, params = {}) {
     }
   }
 
-  const body = {
+  const body: Record<string, string | number | boolean | undefined | null> = {
     auctionid: auctionId,
-    qry: filterEcho.qry ?? '',
-    itemType: filterEcho.itemType ?? 0,
-    itemLevel: filterEcho.itemLevel ?? 43,
-    itemQuality: filterEcho.itemQuality ?? -1,
+    qry: (filterEcho['qry'] as string | undefined) ?? '',
+    itemType: (filterEcho['itemType'] as number | undefined) ?? 0,
+    itemLevel: (filterEcho['itemLevel'] as number | undefined) ?? 43,
+    itemQuality: (filterEcho['itemQuality'] as number | undefined) ?? -1,
     buyouthd: buyout ? '1' : '0',
   };
   if (buyout) {
-    body.buyout = 'Comprar';
+    body['buyout'] = 'Comprar';
   } else {
-    body.bid = 'Proposta';
-    body.bid_amount = String(bidAmount);
+    body['bid'] = 'Proposta';
+    body['bid_amount'] = String(bidAmount);
   }
 
   log.info(`AUCTION ${buyout ? 'BUYOUT' : 'BID'} auction=${auctionId} amount=${bidAmount ?? 'n/a'}`);

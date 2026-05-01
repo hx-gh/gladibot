@@ -3,14 +3,16 @@ import path from 'node:path';
 import { config } from './config.js';
 import { pushLog } from './botState.js';
 
-const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
-const threshold = LEVELS[config.logLevel] ?? 20;
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+const LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+const threshold = (LEVELS as Record<string, number>)[config.logLevel] ?? 20;
 
 const LOG_DIR = path.resolve('logs');
 const LOG_FILE = path.join(LOG_DIR, 'session.log');
 
-let fileFd = null;
-function ensureFile() {
+let fileFd: number | null = null;
+function ensureFile(): number | null {
   if (fileFd !== null) return fileFd;
   try {
     mkdirSync(LOG_DIR, { recursive: true });
@@ -24,17 +26,17 @@ function ensureFile() {
   return fileFd;
 }
 
-function ts() {
+function ts(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
-function formatArg(a) {
+function formatArg(a: unknown): string {
   if (a instanceof Error) return a.stack || a.message;
   if (typeof a === 'string') return a;
   try { return JSON.stringify(a); } catch { return String(a); }
 }
 
-function emit(level, args) {
+function emit(level: LogLevel, args: unknown[]): void {
   if (LEVELS[level] < threshold) return;
   const stamp = ts();
   const tag = `[${stamp}] ${level.toUpperCase().padEnd(5)}`;
@@ -50,10 +52,10 @@ function emit(level, args) {
 }
 
 export const log = {
-  debug: (...a) => emit('debug', a),
-  info: (...a) => emit('info', a),
-  warn: (...a) => emit('warn', a),
-  error: (...a) => emit('error', a),
+  debug: (...a: unknown[]): void => emit('debug', a),
+  info:  (...a: unknown[]): void => emit('info',  a),
+  warn:  (...a: unknown[]): void => emit('warn',  a),
+  error: (...a: unknown[]): void => emit('error', a),
 };
 
 process.on('exit', () => {

@@ -1,4 +1,5 @@
-import express from 'express';
+import express, { type Request, type Response } from 'express';
+import type { Server } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
@@ -35,7 +36,21 @@ function safeConfig() {
   };
 }
 
-export function startUiServer() {
+// Helper: safely extract a query param string (undefined → null)
+function qs(val: string | string[] | undefined): string | null {
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) return val[0] ?? null;
+  return null;
+}
+
+function qsInt(val: string | string[] | undefined, fallback: number): number {
+  const s = qs(val);
+  if (s === null) return fallback;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export async function startUiServer(): Promise<Server | null> {
   if (!config.ui.enabled) {
     log.info('UI disabled (UI_ENABLED=false)');
     return null;
@@ -44,101 +59,105 @@ export function startUiServer() {
   const app = express();
   app.use(express.json());
 
-  app.get('/api/state', (_req, res) => {
+  app.get('/api/state', (_req: Request, res: Response) => {
     res.json(getStateView());
   });
 
-  app.get('/api/logs', (req, res) => {
-    const since = parseInt(req.query.since, 10) || 0;
-    const level = typeof req.query.level === 'string' ? req.query.level : undefined;
+  app.get('/api/logs', (req: Request, res: Response) => {
+    const since = qsInt(req.query.since as string | undefined, 0);
+    const level = qs(req.query.level as string | undefined) ?? undefined;
     res.json({ logs: getLogs({ since, level }), nowMs: Date.now() });
   });
 
-  app.get('/api/config', (_req, res) => {
+  app.get('/api/config', (_req: Request, res: Response) => {
     res.json(safeConfig());
   });
 
-  app.post('/api/pause', (_req, res) => {
+  app.post('/api/pause', (_req: Request, res: Response) => {
     pause();
     log.info('UI: loop paused');
     res.json({ ok: true });
   });
 
-  app.post('/api/resume', (_req, res) => {
+  app.post('/api/resume', (_req: Request, res: Response) => {
     resume();
     log.info('UI: loop resumed');
     res.json({ ok: true });
   });
 
-  app.post('/api/tick', (_req, res) => {
+  app.post('/api/tick', (_req: Request, res: Response) => {
     requestTickNow();
     log.info('UI: tick requested');
     res.json({ ok: true });
   });
 
-  app.post('/api/actions/enable', (_req, res) => {
+  app.post('/api/actions/enable', (_req: Request, res: Response) => {
     setActionsEnabled(true);
     log.warn('UI: ACTIONS ENABLED');
     res.json({ ok: true, actionsEnabled: true });
   });
 
-  app.post('/api/actions/disable', (_req, res) => {
+  app.post('/api/actions/disable', (_req: Request, res: Response) => {
     setActionsEnabled(false);
     log.warn('UI: ACTIONS DISABLED');
     res.json({ ok: true, actionsEnabled: false });
   });
 
   // Lazy fetch — costs only change when user trains or levels up.
-  app.get('/api/training', async (_req, res) => {
+  app.get('/api/training', async (_req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
     try {
       const t = await fetchTrainingStatus(client);
       res.json(t);
     } catch (e) {
-      log.warn(`UI /api/training failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/training failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
-  app.post('/api/train', async (req, res) => {
+  app.post('/api/train', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
     if (!isActionsEnabled()) {
       return res.status(409).json({ ok: false, error: 'actions disabled' });
     }
-    const { skillId } = req.body || {};
+    const { skillId } = (req.body as { skillId?: unknown }) || {};
     if (!skillId) return res.status(400).json({ error: 'skillId required' });
     try {
-      const result = await trainSkill(client, skillId);
+      const result = await trainSkill(client, skillId as number);
       res.json(result);
     } catch (e) {
-      log.warn(`UI /api/train failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/train failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
   // Leilão (read-only). Aceita ttype + filtros via query string.
   // ttype: 1|2|3 (gladiador / item de mercenário / mercenário inteiro — semântica a confirmar)
   // doll, qry, itemLevel, itemType, itemQuality: passados como filter no POST quando presentes.
-  app.get('/api/auction', async (req, res) => {
+  app.get('/api/auction', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
-    const opts = {};
-    if (req.query.ttype !== undefined) opts.ttype = parseInt(req.query.ttype, 10);
-    const filter = {};
+    const opts: Record<string, unknown> = {};
+    const ttypeStr = qs(req.query.ttype as string | undefined);
+    if (ttypeStr !== null) opts['ttype'] = parseInt(ttypeStr, 10);
+    const filter: Record<string, unknown> = {};
     for (const k of ['doll', 'itemLevel', 'itemType', 'itemQuality']) {
-      if (req.query[k] !== undefined) filter[k] = parseInt(req.query[k], 10);
+      const v = qs(req.query[k] as string | undefined);
+      if (v !== null) filter[k] = parseInt(v, 10);
     }
-    if (typeof req.query.qry === 'string') filter.qry = req.query.qry;
-    if (Object.keys(filter).length > 0) opts.filter = filter;
-    if (req.query.onlyTop === '1' || req.query.onlyTop === 'true') opts.onlyTop = true;
+    const qryVal = qs(req.query.qry as string | undefined);
+    if (qryVal !== null) filter['qry'] = qryVal;
+    if (Object.keys(filter).length > 0) opts['filter'] = filter;
+    const onlyTopStr = qs(req.query.onlyTop as string | undefined);
+    if (onlyTopStr === '1' || onlyTopStr === 'true') opts['onlyTop'] = true;
     try {
-      const list = await fetchAuctionList(client, opts);
+      const list = await fetchAuctionList(client, opts as Parameters<typeof fetchAuctionList>[1]);
       res.json(list);
     } catch (e) {
-      log.warn(`UI /api/auction failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/auction failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
@@ -146,55 +165,60 @@ export function startUiServer() {
   //   { auctionId, ttype?, buyout?, bidAmount?, rubyAmount?, filterEcho? }
   // Gated por isActionsEnabled() (mesmo kill switch do training). Reusa
   // actions/auction.placeBid, que já loga + marca o ID em botState.myBidAuctionIds.
-  app.post('/api/auction/bid', async (req, res) => {
+  app.post('/api/auction/bid', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
     if (!isActionsEnabled()) {
       return res.status(409).json({ ok: false, error: 'actions disabled' });
     }
-    const { auctionId, ttype, buyout = false, bidAmount, rubyAmount = 60, filterEcho = {} } = req.body || {};
+    const body = (req.body as Record<string, unknown>) || {};
+    const { auctionId, ttype, buyout = false, bidAmount, rubyAmount = 60, filterEcho = {} } = body;
     if (!auctionId) return res.status(400).json({ ok: false, error: 'auctionId required' });
     if (!buyout && (bidAmount === undefined || bidAmount === null)) {
       return res.status(400).json({ ok: false, error: 'bidAmount required when buyout=false' });
     }
     try {
       const result = await placeBid(client, {
-        auctionId: parseInt(auctionId, 10),
-        ttype: ttype !== undefined ? parseInt(ttype, 10) : 1,
+        auctionId: parseInt(String(auctionId), 10),
+        ttype: ttype !== undefined ? parseInt(String(ttype), 10) : 1,
         buyout: !!buyout,
-        bidAmount: bidAmount !== undefined ? parseInt(bidAmount, 10) : undefined,
-        rubyAmount,
-        filterEcho,
+        bidAmount: bidAmount !== undefined ? parseInt(String(bidAmount), 10) : undefined,
+        rubyAmount: Number(rubyAmount),
+        filterEcho: filterEcho as Record<string, unknown>,
       });
       res.json(result);
     } catch (e) {
-      log.warn(`UI /api/auction/bid failed: ${e.message}`);
-      res.status(500).json({ ok: false, error: e.message });
+      log.warn(`UI /api/auction/bid failed: ${(e as Error).message}`);
+      res.status(500).json({ ok: false, error: (e as Error).message });
     }
   });
 
   // Characters (principal + espelho + 4 mercs). Lazy fetch — varre doll=1..6
   // em paralelo, persiste no SQLite, retorna JSON. ?from=db lê estado salvo
   // sem re-fetch (pra Claude consumir via curl sem onerar o servidor do jogo).
-  async function loadCharacters(req) {
-    if (req.query.from === 'db') return readAllCharacters();
+  async function loadCharacters(req: Request) {
+    if (req.query['from'] === 'db') return readAllCharacters();
     const client = getClient();
     if (!client) throw new Error('client not ready');
     const all = await fetchAllCharacters(client);
-    persistCharacters(all);
+    // fetchAllCharacters returns Record<string,unknown>[] — loosely typed since
+    // the characters action predates the shared types. Cast is safe: the shape
+    // matches ParsedChar structurally.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    persistCharacters(all as any);
     return all;
   }
 
-  app.get('/api/characters', async (req, res) => {
+  app.get('/api/characters', async (req: Request, res: Response) => {
     try {
       res.json({ characters: await loadCharacters(req) });
     } catch (e) {
-      log.warn(`UI /api/characters failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/characters failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
-  app.get('/api/characters/attributes', async (req, res) => {
+  app.get('/api/characters/attributes', async (req: Request, res: Response) => {
     try {
       const all = await loadCharacters(req);
       res.json({
@@ -205,12 +229,12 @@ export function startUiServer() {
         })),
       });
     } catch (e) {
-      log.warn(`UI /api/characters/attributes failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/characters/attributes failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
-  app.get('/api/characters/items', async (req, res) => {
+  app.get('/api/characters/items', async (req: Request, res: Response) => {
     try {
       const all = await loadCharacters(req);
       res.json({
@@ -220,8 +244,8 @@ export function startUiServer() {
         })),
       });
     } catch (e) {
-      log.warn(`UI /api/characters/items failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/characters/items failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
@@ -230,11 +254,11 @@ export function startUiServer() {
   // `?level=N` ou usa o level do snapshot do char ativo se omitido.
   // NOTA: pra popular o <select> da UI, use `/api/auction/level-options` —
   // o jogo usa step variável (não 6) que a fórmula sozinha não reproduz.
-  app.get('/api/formulas/auction-level-range', (req, res) => {
-    let level = parseInt(req.query.level, 10);
+  app.get('/api/formulas/auction-level-range', (req: Request, res: Response) => {
+    let level = qsInt(req.query.level as string | undefined, NaN);
     if (!Number.isFinite(level)) {
       const view = getStateView();
-      level = view?.snapshot?.level ?? null;
+      level = view?.snapshot?.level ?? NaN;
     }
     if (!Number.isFinite(level)) return res.status(400).json({ error: 'level missing' });
     res.json(auctionLevelRange(level));
@@ -243,18 +267,17 @@ export function startUiServer() {
   // Opções aceitas pelo <select name="itemLevel"> — extraídas direto do HTML
   // do leilão. Use isso pra popular o dropdown da UI, é a única fonte que
   // bate 100% com o que o servidor aceita (o step varia com o nível).
-  app.get('/api/auction/level-options', async (req, res) => {
+  app.get('/api/auction/level-options', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
     try {
-      const ttype = req.query.ttype !== undefined && req.query.ttype !== ''
-        ? parseInt(req.query.ttype, 10)
-        : undefined;
+      const ttypeStr = qs(req.query.ttype as string | undefined);
+      const ttype = ttypeStr !== null && ttypeStr !== '' ? parseInt(ttypeStr, 10) : undefined;
       const result = await fetchAuctionLevelOptions(client, { ttype });
       res.json(result);
     } catch (e) {
-      log.warn(`UI /api/auction/level-options failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/auction/level-options failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
@@ -268,34 +291,36 @@ export function startUiServer() {
   //   refresh     — '1' força fetchAllCharacters antes (gear/stats fresh)
   // Dedup: candidato que aparece em ring1 E ring2 do mesmo merc é marcado
   // com `dupOf: 'ring2'` no segundo slot pra UI esconder/agrupar.
-  app.get('/api/mercs/suggestions', async (req, res) => {
+  app.get('/api/mercs/suggestions', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).json({ error: 'client not ready' });
     try {
-      const ttype = req.query.ttype !== undefined && req.query.ttype !== ''
-        ? parseInt(req.query.ttype, 10)
-        : undefined;
-      const itemQuality = req.query.itemQuality !== undefined ? parseInt(req.query.itemQuality, 10) : -1;
+      const ttypeStr = qs(req.query.ttype as string | undefined);
+      const ttype = ttypeStr !== null && ttypeStr !== '' ? parseInt(ttypeStr, 10) : undefined;
+      const itemQuality = qsInt(req.query.itemQuality as string | undefined, -1);
       const slotsToConsider = (() => {
-        const n = parseInt(req.query.slots, 10);
+        const n = qsInt(req.query.slots as string | undefined, NaN);
         if (!Number.isFinite(n)) return 4;
         return Math.max(1, Math.min(9, n));
       })();
-      const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+      const refreshStr = qs(req.query.refresh as string | undefined);
+      const refresh = refreshStr === '1' || refreshStr === 'true';
       const view = getStateView();
       const charLevel = view?.snapshot?.level ?? null;
       const range = charLevel ? auctionLevelRange(charLevel) : null;
-      const itemLevel = req.query.itemLevel !== undefined
-        ? parseInt(req.query.itemLevel, 10)
-        : (range?.min ?? 36);
+      const itemLevelStr = qs(req.query.itemLevel as string | undefined);
+      const itemLevel = itemLevelStr !== null ? parseInt(itemLevelStr, 10) : (range?.min ?? 36);
 
       // Refresh ou DB vazio → fetchAll antes de gerar sugestões.
       if (refresh || readAllCharacters().length === 0) {
         const all = await fetchAllCharacters(client);
-        persistCharacters(all);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        persistCharacters(all as any);
       }
-      const fetchOpts = { filter: { itemType: 0, itemLevel, itemQuality, doll: 1 } };
-      if (ttype !== undefined) fetchOpts.ttype = ttype;
+      const fetchOpts: Parameters<typeof fetchAuctionList>[1] = {
+        filter: { itemType: 0, itemLevel, itemQuality, doll: 1 },
+      };
+      if (ttype !== undefined) (fetchOpts as Record<string, unknown>)['ttype'] = ttype;
       const list = await fetchAuctionList(client, fetchOpts);
       const chars = readAllCharacters();
       // Inclui o char principal (doll=1) + mercs reais. Player alts (mesmo
@@ -305,13 +330,15 @@ export function startUiServer() {
       const orderedChars = chars
         .filter((c) => c.doll === 1 || !playerName || c.name !== playerName)
         .sort((a, b) => a.doll - b.doll);
-      const suggestions = buildSuggestions(list.listings, orderedChars, { slotsToConsider });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const suggestions = buildSuggestions(list.listings as any, orderedChars as any, { slotsToConsider });
 
       // Dedup entre slots (ring1/ring2 principalmente): se um mesmo
       // auctionId aparece em mais de um slot do mesmo merc, mantemos apenas
       // no primeiro (com priority maior) e anotamos `dupOf` no resto.
-      for (const m of suggestions) {
-        const seen = new Map();   // auctionId -> primeiro slot que listou
+      type MercSuggEntry = { suggestions: Array<{ slot: string; candidates: Array<{ auctionId: number; dupOf?: string }> }> };
+      for (const m of suggestions as MercSuggEntry[]) {
+        const seen = new Map<number, string>();   // auctionId -> primeiro slot que listou
         for (const s of m.suggestions) {
           for (const c of s.candidates) {
             const prev = seen.get(c.auctionId);
@@ -332,30 +359,31 @@ export function startUiServer() {
         mercs: suggestions,
       });
     } catch (e) {
-      log.warn(`UI /api/mercs/suggestions failed: ${e.message}`);
-      res.status(500).json({ error: e.message });
+      log.warn(`UI /api/mercs/suggestions failed: ${(e as Error).message}`);
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 
   // Debug: capturar HTML cru do leilão com filtros aplicados (POST). Útil pra
   // refinar parser de "meu lance"/currentBid sem ter que decifrar o JSON parseado.
-  app.get('/api/debug/auction-html', async (req, res) => {
+  app.get('/api/debug/auction-html', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).type('text').send('client not ready');
-    const params = { mod: 'auction' };
-    if (typeof req.query.ttype === 'string') params.ttype = req.query.ttype;
-    const body = {
-      doll: parseInt(req.query.doll, 10) || 1,
-      qry: typeof req.query.qry === 'string' ? req.query.qry : '',
-      itemLevel: parseInt(req.query.itemLevel, 10) || 43,
-      itemType: parseInt(req.query.itemType, 10) || 0,
-      itemQuality: parseInt(req.query.itemQuality, 10) || -1,
+    const params: Record<string, string | number | undefined | null> = { mod: 'auction' };
+    const ttypeVal = qs(req.query.ttype as string | undefined);
+    if (ttypeVal !== null) params['ttype'] = ttypeVal;
+    const body: Record<string, string | number | boolean | undefined | null> = {
+      doll: qsInt(req.query.doll as string | undefined, 1),
+      qry: qs(req.query.qry as string | undefined) ?? '',
+      itemLevel: qsInt(req.query.itemLevel as string | undefined, 43),
+      itemType: qsInt(req.query.itemType as string | undefined, 0),
+      itemQuality: qsInt(req.query.itemQuality as string | undefined, -1),
     };
     try {
       const html = await client.postForm('/game/index.php', params, body);
       res.type('text/plain; charset=utf-8').send(typeof html === 'string' ? html : JSON.stringify(html));
     } catch (e) {
-      res.status(500).type('text').send(`fetch failed: ${e.message}`);
+      res.status(500).type('text').send(`fetch failed: ${(e as Error).message}`);
     }
   });
 
@@ -363,28 +391,31 @@ export function startUiServer() {
   // 127.0.0.1, but still gated to common safe params. Returns text/html so it
   // renders raw in the browser (View Source). Useful to capture HTML when the
   // parser is missing some state (e.g., "working" indicator).
-  app.get('/api/debug/html', async (req, res) => {
+  app.get('/api/debug/html', async (req: Request, res: Response) => {
     const client = getClient();
     if (!client) return res.status(503).type('text').send('client not ready (login still in progress?)');
-    const params = {};
+    const params: Record<string, string | number | undefined | null> = {};
     for (const k of ['mod', 'submod', 'loc', 'sub']) {
-      if (typeof req.query[k] === 'string') params[k] = req.query[k];
+      const v = qs(req.query[k] as string | undefined);
+      if (v !== null) params[k] = v;
     }
-    if (!params.mod) return res.status(400).type('text').send('usage: /api/debug/html?mod=overview[&submod=][&loc=][&doll=N][&raw=1]');
-    if (typeof req.query.doll === 'string') params.doll = req.query.doll;
-    const noXhr = req.query.raw === '1' || req.query.raw === 'true';
+    if (!params['mod']) return res.status(400).type('text').send('usage: /api/debug/html?mod=overview[&submod=][&loc=][&doll=N][&raw=1]');
+    const dollVal = qs(req.query.doll as string | undefined);
+    if (dollVal !== null) params['doll'] = dollVal;
+    const rawStr = qs(req.query.raw as string | undefined);
+    const noXhr = rawStr === '1' || rawStr === 'true';
     try {
       log.debug(`UI debug GET ${JSON.stringify(params)} noXhr=${noXhr}`);
       const html = await client.fetchRawHtml('/game/index.php', params, { noXhr });
-      res.type('text/plain; charset=utf-8').send(html);
+      res.type('text/plain; charset=utf-8').send(typeof html === 'string' ? html : JSON.stringify(html));
     } catch (e) {
-      res.status(500).type('text').send(`fetch failed: ${e.message}`);
+      res.status(500).type('text').send(`fetch failed: ${(e as Error).message}`);
     }
   });
 
   app.use(express.static(path.join(__dirname, 'public')));
 
-  return new Promise((resolve, reject) => {
+  return await new Promise<Server>((resolve, reject) => {
     const server = app.listen(config.ui.port, '127.0.0.1', () => {
       log.info(`UI running at http://localhost:${config.ui.port}`);
       resolve(server);

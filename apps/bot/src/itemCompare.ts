@@ -21,7 +21,7 @@
 // inclui peças como "Luvas de cobre", "Braceletes de ferro", "Protetor de
 // cobre"). type=11 é CONSUMÍVEL (Frasco, Falcão, Ampulheta), type=7 é CURA
 // (Maçã, Poção), type=12 é MELHORIAS (Pó).
-export const ITEM_CATEGORY_LABEL = {
+export const ITEM_CATEGORY_LABEL: Record<number, string> = {
   1: 'Arma',
   2: 'Escudo',
   3: 'Armadura',
@@ -36,15 +36,15 @@ export const ITEM_CATEGORY_LABEL = {
   15: 'Mercenário',
 };
 
-export function categoryLabel(itemType) {
+export function categoryLabel(itemType: number | null | undefined): string | null {
   if (itemType === null || itemType === undefined) return null;
-  return ITEM_CATEGORY_LABEL[itemType] || `tipo ${itemType}`;
+  return ITEM_CATEGORY_LABEL[itemType] ?? `tipo ${itemType}`;
 }
 
 // Chave canônica pra parear stats entre item × equipado. Considera flat vs
 // percent como stats DIFERENTES (o jogo lista "Força +7" e "Força +13% (+20)"
 // como duas linhas distintas no mesmo item).
-export function statKey(label) {
+export function statKey(label: string | null | undefined): string {
   if (!label) return '';
   if (/^Dano\s+\d+\s*-\s*\d+/.test(label)) return 'dano-range';
   const isPct = /%/.test(label);
@@ -60,7 +60,7 @@ export function statKey(label) {
 //   "Bônus de bloqueio: 7%" → 7
 //   "Força +7"              → 7
 //   "Constituição -2"       → -2
-export function statValue(label) {
+export function statValue(label: string | null | undefined): number {
   if (!label) return 0;
   const range = label.match(/(\d+)\s*-\s*(\d+)\s*$/);
   if (range) return (parseInt(range[1], 10) + parseInt(range[2], 10)) / 2;
@@ -73,18 +73,46 @@ export function statValue(label) {
   return 0;
 }
 
-function signFromValues(itemValue, equippedValue) {
+function signFromValues(itemValue: number | null | undefined, equippedValue: number | null | undefined): number {
   const diff = (itemValue ?? 0) - (equippedValue ?? 0);
   return diff > 0 ? 1 : diff < 0 ? -1 : 0;
 }
 
+interface StatRow {
+  label: string | null;
+  color: string | null;
+  delta: string | null;
+}
+
+interface AnnotatedStat {
+  label: string | null;
+  color: string | null;
+  delta: string | null;
+  key: string;
+  value: number;
+}
+
+interface PairedRow {
+  key: string;
+  itemLabel: string | null;
+  itemValue: number | null;
+  equippedLabel: string | null;
+  equippedValue: number | null;
+  deltaLabel: string | null;
+  deltaNum: number;
+  sign: number;
+  wasted?: boolean;
+  consolidated?: boolean;
+  deltaNum2?: number;
+}
+
 // Normaliza linhas {label, color, delta?} num shape com chave + valor numérico
 // pra parear.
-function annotate(stats) {
+function annotate(stats: StatRow[] | null | undefined): AnnotatedStat[] {
   return (stats || []).map((s) => ({
     label: s.label,
-    color: s.color || null,
-    delta: s.delta || null,
+    color: s.color ?? null,
+    delta: s.delta ?? null,
     key: statKey(s.label),
     value: statValue(s.label),
   }));
@@ -97,14 +125,14 @@ const CONSOLIDATABLE_STATS = new Set([
   'força', 'destreza', 'agilidade', 'constituição', 'carisma', 'inteligência',
 ]);
 
-function extractValueToken(label) {
+function extractValueToken(label: string | null | undefined): string | null {
   if (!label) return null;
   const m = label.match(/([+-]\d+%?)/);
   return m ? m[0] : null;
 }
 
-function capitalize(s) {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+function capitalize(s: string | null | undefined): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
 
 // Junta as linhas `força-flat` + `força-pct` (e equivalentes) numa só linha
@@ -112,31 +140,31 @@ function capitalize(s) {
 // componentes no label entre parênteses pra não perder informação. Stats
 // fora de `CONSOLIDATABLE_STATS` (Dano range, Armadura, Saúde, etc.) passam
 // direto sem mudança.
-function consolidateMainStats(rows) {
-  const buckets = new Map();
-  const passthrough = [];
+function consolidateMainStats(rows: PairedRow[]): PairedRow[] {
+  const buckets = new Map<string, PairedRow[]>();
+  const passthrough: PairedRow[] = [];
   for (const r of rows) {
-    const prefix = (r.key.split('-')[0] || '').toLowerCase();
+    const prefix = (r.key.split('-')[0] ?? '').toLowerCase();
     if (CONSOLIDATABLE_STATS.has(prefix)) {
       if (!buckets.has(prefix)) buckets.set(prefix, []);
-      buckets.get(prefix).push(r);
+      buckets.get(prefix)!.push(r);
     } else {
       passthrough.push(r);
     }
   }
 
-  const consolidated = [];
+  const consolidated: PairedRow[] = [];
   for (const [prefix, group] of buckets) {
     if (group.length === 1) {
       // Re-chaveia pra `prefix` direto (sem -flat/-pct) pra bater com o
       // analyzeRecommendation no client.
-      consolidated.push({ ...group[0], key: prefix });
+      consolidated.push({ ...group[0]!, key: prefix });
       continue;
     }
-    let itemTotal = null;
-    let equippedTotal = null;
-    const itemParts = [];
-    const equippedParts = [];
+    let itemTotal: number | null = null;
+    let equippedTotal: number | null = null;
+    const itemParts: string[] = [];
+    const equippedParts: string[] = [];
     for (const r of group) {
       if (r.itemValue !== null && r.itemValue !== undefined) {
         itemTotal = (itemTotal ?? 0) + r.itemValue;
@@ -150,14 +178,14 @@ function consolidateMainStats(rows) {
       }
     }
     const cap = capitalize(prefix);
-    const fmtTotal = (n, parts) => {
+    const fmtTotal = (n: number, parts: string[]): string => {
       const sign = n >= 0 ? '+' : '';
       const detail = parts.length > 1 ? ` (${parts.join(' + ')})` : '';
       return `${cap} ${sign}${n}${detail}`;
     };
     const itemLabel = itemTotal !== null ? fmtTotal(itemTotal, itemParts) : null;
     const equippedLabel = equippedTotal !== null ? fmtTotal(equippedTotal, equippedParts) : null;
-    let deltaNum;
+    let deltaNum: number;
     if (itemTotal !== null && equippedTotal !== null) {
       deltaNum = itemTotal - equippedTotal;
     } else if (itemTotal !== null) {
@@ -183,6 +211,12 @@ function consolidateMainStats(rows) {
   return [...consolidated, ...passthrough];
 }
 
+interface TooltipBlock {
+  stats?: StatRow[] | null;
+  level?: number | null;
+  name?: string | null;
+}
+
 // Pareia stats do item leiloado × stats do equipado por chave canônica.
 //
 // Sempre usa math direta `itemValue − equippedValue` pro delta de swap. Os
@@ -192,20 +226,20 @@ function consolidateMainStats(rows) {
 // Saída: rows `{ key, itemLabel, itemValue, equippedLabel, equippedValue,
 // deltaLabel, deltaNum, sign }`. `deltaNum` é a magnitude numérica usada
 // pelo score weighted; `deltaLabel` é o string pra UI exibir.
-export function pairStats(itemBlock, equippedBlock) {
+export function pairStats(itemBlock: TooltipBlock | null | undefined, equippedBlock: TooltipBlock | null | undefined): PairedRow[] {
   const itemStats = annotate(itemBlock?.stats);
   const equippedStats = annotate(equippedBlock?.stats);
 
-  const used = new Set();
-  const rows = [];
+  const used = new Set<number>();
+  const rows: PairedRow[] = [];
 
   for (const s of itemStats) {
     let eqIdx = -1;
     for (let i = 0; i < equippedStats.length; i++) {
       if (used.has(i)) continue;
-      if (equippedStats[i].key === s.key) { eqIdx = i; break; }
+      if (equippedStats[i]!.key === s.key) { eqIdx = i; break; }
     }
-    const eq = eqIdx !== -1 ? equippedStats[eqIdx] : null;
+    const eq = eqIdx !== -1 ? equippedStats[eqIdx]! : null;
     if (eq) used.add(eqIdx);
 
     const deltaNum = (s.value ?? 0) - (eq?.value ?? 0);
@@ -241,12 +275,19 @@ export function pairStats(itemBlock, equippedBlock) {
   return consolidateMainStats(rows);
 }
 
+interface SummarizeOptions {
+  itemLevel?: number | null;
+  equippedLevel?: number | null;
+}
+
 // Resumo agregado pra UI: contagem de ups/downs/same e flag heurística
 // `isUpgrade`. Combina o sinal de cada linha com o gap de level item × equipado
 // — diferença grande de level (item muito mais novo) é um forte sinal de
 // upgrade mesmo perdendo alguns flats antigos. Cada 5 levels de gap valem
 // 1 "ponto" no score, balanceado contra (ups − downs).
-export function summarizeRows(rows, hasComparison, options = {}) {
+export function summarizeRows(rows: PairedRow[], hasComparison: boolean, options: SummarizeOptions = {}): {
+  up: number; down: number; same: number; lvlDiff: number; score: number; isUpgrade: boolean; hasComparison: boolean;
+} {
   let up = 0, down = 0, same = 0;
   for (const r of rows) {
     if (!hasComparison) continue;
@@ -254,8 +295,8 @@ export function summarizeRows(rows, hasComparison, options = {}) {
     else if (r.sign < 0) down++;
     else same++;
   }
-  const itemLevel = Number.isFinite(options.itemLevel) ? options.itemLevel : null;
-  const equippedLevel = Number.isFinite(options.equippedLevel) ? options.equippedLevel : null;
+  const itemLevel = Number.isFinite(options.itemLevel) ? (options.itemLevel as number) : null;
+  const equippedLevel = Number.isFinite(options.equippedLevel) ? (options.equippedLevel as number) : null;
   const lvlDiff = itemLevel !== null && equippedLevel !== null ? itemLevel - equippedLevel : 0;
   const score = (up - down) + lvlDiff / 5;
   return {
@@ -269,9 +310,25 @@ export function summarizeRows(rows, hasComparison, options = {}) {
   };
 }
 
+interface ListingForComparison {
+  tooltip?: { item?: TooltipBlock | null; equipped?: TooltipBlock | null } | null;
+  level?: number | null;
+  itemType?: number | null;
+}
+
 // Função "porteira" pro auction.js: dado um listing já parseado, devolve
 // `{ category, comparison: { rows, summary, equippedName, itemLevel, equippedLevel } }`.
-export function buildComparison(listing) {
+export function buildComparison(listing: ListingForComparison): {
+  category: string | null;
+  comparison: {
+    hasComparison: boolean;
+    equippedName: string | null;
+    itemLevel: number | null;
+    equippedLevel: number | null;
+    rows: PairedRow[];
+    summary: ReturnType<typeof summarizeRows>;
+  };
+} {
   const itemBlock = listing.tooltip?.item;
   const equippedBlock = listing.tooltip?.equipped;
   // Há comparação se o equipado existe E tem ao menos um stat. Soulbound
@@ -285,7 +342,7 @@ export function buildComparison(listing) {
     category: categoryLabel(listing.itemType),
     comparison: {
       hasComparison,
-      equippedName: equippedBlock?.name || null,
+      equippedName: equippedBlock?.name ?? null,
       itemLevel,
       equippedLevel,
       rows,

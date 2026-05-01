@@ -14,7 +14,8 @@
     "ui": "pnpm --filter @gladibot/bot ui",
     "bot:tick": "pnpm --filter @gladibot/bot tick",
     "bot:loop": "pnpm --filter @gladibot/bot loop",
-    "bot:ui": "pnpm --filter @gladibot/bot ui"
+    "bot:ui": "pnpm --filter @gladibot/bot ui",
+    "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
     "turbo": "^2.3.0"

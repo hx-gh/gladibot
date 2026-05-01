@@ -2,21 +2,38 @@
 // específicos (não regex genérico) — confere com a estrutura observada em
 // produção (BR62 Speed x5, página com header padrão).
 
-function toInt(s) {
+import type {
+  BotSnapshot,
+  StatDetail,
+  StatBlock,
+  BuffEntry,
+  BuffsBlock,
+  InventoryFoodItem,
+  InventoryCell,
+  InventoryGrid,
+  WorkStatus,
+  AuctionTooltipBlock,
+  AuctionTooltip,
+  AuctionStatRow,
+  AuctionListing,
+  AuctionListResult,
+} from '@gladibot/shared';
+
+function toInt(s: unknown): number | null {
   if (s === null || s === undefined) return null;
   const cleaned = String(s).replace(/[.\s]/g, '');
   const n = parseInt(cleaned, 10);
   return Number.isFinite(n) ? n : null;
 }
 
-function rxOne(html, re) {
+function rxOne(html: string, re: RegExp): string | null {
   const m = html.match(re);
   return m ? m[1] : null;
 }
 
 // `new ProgressBar('cooldown_bar_text_<slot>', ..., start, current, end)`
 // Retorna segundos restantes, 0 se já está pronto, null se não achou.
-function extractCooldown(html, slot) {
+function extractCooldown(html: string, slot: string): number | null {
   const re = new RegExp(
     `new\\s+ProgressBar\\([\\s\\S]*?'cooldown_bar_text_${slot}'[\\s\\S]*?(\\d{9,}),\\s*(\\d{9,}),\\s*(\\d{9,})\\s*\\)`
   );
@@ -31,7 +48,7 @@ function extractCooldown(html, slot) {
 // Confirmados em produção: char_f3 = Constituição → skillToTrain=4,
 //                          char_f5 = Inteligência → skillToTrain=6.
 // Os outros são inferidos do padrão sequencial.
-export const STAT_SLOTS = [
+export const STAT_SLOTS: { domId: string; key: keyof StatBlock; label: string; trainId: number }[] = [
   { domId: 'f0', key: 'strength',     label: 'Força',        trainId: 1 },
   { domId: 'f1', key: 'dexterity',    label: 'Destreza',     trainId: 2 },
   { domId: 'f2', key: 'agility',      label: 'Agilidade',    trainId: 3 },
@@ -40,7 +57,7 @@ export const STAT_SLOTS = [
   { domId: 'f5', key: 'intelligence', label: 'Inteligência', trainId: 6 },
 ];
 
-function decodeAttr(s) {
+function decodeAttr(s: string): string {
   return s
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, '&')
@@ -52,7 +69,7 @@ function decodeAttr(s) {
 // `[[label, value], [color1, color2]]` ou `[label, color, width]`. Procuramos
 // linhas conhecidas: o nome do stat (total), "Básico:", "Máximo:", "Por artigos:".
 // Tooltip JSON pode vir aninhado em 1 ou 2 níveis. Drilamos até as "rows".
-function unwrapTooltip(json) {
+function unwrapTooltip(json: unknown): unknown {
   let rows = json;
   while (Array.isArray(rows) && rows.length === 1 && Array.isArray(rows[0])) {
     if (rows[0].length > 0 && Array.isArray(rows[0][0])) { rows = rows[0]; break; }
@@ -61,17 +78,25 @@ function unwrapTooltip(json) {
   return rows;
 }
 
-function parseStatTooltip(rawAttr, knownLabel) {
+interface StatTooltipRaw {
+  total: number | null;
+  base: number | null;
+  max: number | null;
+  items: number | null;
+  itemsMax: number | null;
+}
+
+function parseStatTooltip(rawAttr: string, knownLabel: string): StatTooltipRaw | null {
   const decoded = decodeAttr(rawAttr);
-  let json;
+  let json: unknown;
   try { json = JSON.parse(decoded); } catch { return null; }
   const rows = unwrapTooltip(json);
   if (!Array.isArray(rows)) return null;
 
-  const out = { total: null, base: null, max: null, items: null, itemsMax: null };
+  const out: StatTooltipRaw = { total: null, base: null, max: null, items: null, itemsMax: null };
   for (const row of rows) {
     if (!Array.isArray(row) || !Array.isArray(row[0])) continue;
-    const [label, value] = row[0];
+    const [label, value] = row[0] as [unknown, unknown];
     if (typeof label !== 'string') continue;
 
     const clean = label.replace(/\s+/g, ' ').trim();
@@ -91,34 +116,37 @@ function parseStatTooltip(rawAttr, knownLabel) {
   return out;
 }
 
-function parseStatsBlock(html) {
-  const stats = {};
+function parseStatsBlock(html: string): StatBlock {
+  const stats: Partial<StatBlock> = {};
   for (const slot of STAT_SLOTS) {
     const m = html.match(new RegExp(`id="char_${slot.domId}_tt"[^>]*data-tooltip="([^"]+)"`));
     if (!m) { stats[slot.key] = null; continue; }
     const parsed = parseStatTooltip(m[1], slot.label);
     if (!parsed || parsed.total === null) { stats[slot.key] = null; continue; }
-    parsed.label = slot.label;
-    parsed.trainId = slot.trainId;
-    parsed.bonus = (parsed.base !== null && parsed.items !== null)
-      ? parsed.total - parsed.base - parsed.items
-      : 0;
-    stats[slot.key] = parsed;
+    const detail: StatDetail = {
+      ...parsed,
+      label: slot.label,
+      trainId: slot.trainId,
+      bonus: (parsed.base !== null && parsed.items !== null)
+        ? parsed.total - parsed.base - parsed.items
+        : 0,
+    };
+    stats[slot.key] = detail;
   }
-  return stats;
+  return stats as StatBlock;
 }
 
 // Buffs:
 //   Globais (header `#globalBuffs`): div.buff-clickable com `title=`, `data-effect-end` (segs).
 //   Pessoais (`#buffbar_old`): div.buff_old com data-tooltip JSON + span data-ticker-time-left (ms).
-function parseBuffs(html) {
+function parseBuffs(html: string): BuffsBlock {
   // The expiration we get from the HTML is "seconds remaining at the moment of
   // the GET". If we stored it raw and kept showing the same number, it'd appear
   // frozen until the next snapshot. Convert to an absolute endsAtMs so the UI
   // can decrement live.
   const now = Date.now();
-  const global = [];
-  const personal = [];
+  const global: BuffEntry[] = [];
+  const personal: BuffEntry[] = [];
 
   const gSection = html.match(/<div\s+id="globalBuffs">([\s\S]*?)<div\s+id="localBuffs">/);
   if (gSection) {
@@ -134,13 +162,13 @@ function parseBuffs(html) {
   const personalRe =
     /<div\s+class="buff_old[^"]*">[\s\S]*?id="buffBar\d+"[^>]*data-tooltip="([^"]+)"[\s\S]*?data-ticker-time-left="(\d+)"/g;
   for (const m of html.matchAll(personalRe)) {
-    let json;
+    let json: unknown;
     try { json = JSON.parse(decodeAttr(m[1])); } catch { continue; }
     const rows = unwrapTooltip(json);
     const firstRow = Array.isArray(rows) ? rows[0] : null;
     const name = (Array.isArray(firstRow) && typeof firstRow[0] === 'string') ? firstRow[0] : '?';
     // Find the green "effect" line (color #00B712).
-    let effect = null;
+    let effect: string | null = null;
     if (Array.isArray(rows)) {
       for (const row of rows) {
         if (Array.isArray(row) && typeof row[0] === 'string' && /00B712/i.test(String(row[1] || ''))) {
@@ -159,14 +187,28 @@ function parseBuffs(html) {
   return { global, personal };
 }
 
+interface TrainingSkill {
+  key: string;
+  label: string;
+  trainId: number;
+  cost: number | null;
+  canTrain: boolean;
+}
+
+export interface TrainingStatus {
+  skills: TrainingSkill[];
+  skillPoints: number;
+  stats: StatBlock;
+}
+
 // Custos de treinamento (página mod=training). O HTML repete o mesmo bloco
 // pra cada um dos 6 stats, com:
 //   <div ... id="char_fN_tt" ...> (mesmo do overview)
 //   <div class="training_costs"> CUSTO <img...> </div>
 //   <a class="training_button" href="...skillToTrain=ID..."> ←  habilitado
 //   OR <img ... button_disabled.jpg ...>                   ← sem ouro suficiente
-export function parseTraining(html) {
-  const skills = [];
+export function parseTraining(html: string): TrainingStatus {
+  const skills: TrainingSkill[] = [];
   for (const slot of STAT_SLOTS) {
     const re = new RegExp(
       `id="char_${slot.domId}_tt"[\\s\\S]*?<div class="training_costs">[\\s\\S]*?` +
@@ -196,8 +238,8 @@ export function parseTraining(html) {
   return { skills, skillPoints, stats };
 }
 
-export function parseOverview(html) {
-  const state = {
+export function parseOverview(html: string): BotSnapshot {
+  const state: BotSnapshot = {
     charName: rxOne(html, /<div class="playername[^"]*">\s*([^<]+?)\s*<\/div>/),
     gold: toInt(rxOne(html, /id="sstat_gold_val"[^>]*>([\d.,]+)</)),
     rubies: toInt(rxOne(html, /id="sstat_ruby_val"[^>]*>([\d.,]+)</)),
@@ -215,6 +257,7 @@ export function parseOverview(html) {
     // Working state — populated by orchestrator from a separate mod=work fetch.
     // Overview alone has no signal that the character is currently working.
     working: { active: false, secondsLeft: null, jobName: null },
+    inventoryGrid: {} as InventoryGrid,
   };
 
   // HP absoluto via data-attributes em #header_values_hp_bar
@@ -243,14 +286,14 @@ export function parseOverview(html) {
   const itemRe = /<div\b[^>]*\bdata-content-type=["']64["'][^>]*>/g;
   for (const m of html.matchAll(itemRe)) {
     const tag = m[0];
-    const get = (name) => {
+    const get = (name: string): string | null => {
       const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
       const mm = tag.match(r);
       return mm ? mm[1] : null;
     };
     const tooltipRaw = get('data-tooltip');
     if (!tooltipRaw) continue;
-    let parsed = null;
+    let parsed: unknown = null;
     try {
       const decoded = tooltipRaw
         .replace(/&quot;/g, '"')
@@ -260,21 +303,25 @@ export function parseOverview(html) {
     } catch { /* ignore */ }
     let name = '?';
     let healNominal = 0;
-    if (parsed && parsed[0]) {
-      const inner = parsed[0];
-      if (inner[0]) name = String(inner[0][0] || '?');
-      const healEntry = inner.find((e) => /Usar: Cura\s+\d+/.test(e[0] || ''));
-      if (healEntry) healNominal = parseInt(healEntry[0].match(/\d+/)[0], 10);
+    if (parsed && Array.isArray(parsed) && parsed[0]) {
+      const inner = parsed[0] as unknown[];
+      if (inner[0]) name = String((inner[0] as unknown[])[0] || '?');
+      const healEntry = inner.find((e) => /Usar: Cura\s+\d+/.test(String((e as unknown[])[0] || '')));
+      if (healEntry) {
+        const match = String((healEntry as unknown[])[0]).match(/\d+/);
+        if (match) healNominal = parseInt(match[0], 10);
+      }
     }
     if (healNominal > 0) {
-      state.inventoryFood.push({
+      const item: InventoryFoodItem = {
         itemId: get('data-item-id'),
         from: parseInt(get('data-container-number') || '512', 10),
         fromX: parseInt(get('data-position-x') || '0', 10),
         fromY: parseInt(get('data-position-y') || '0', 10),
         name,
         healNominal,
-      });
+      };
+      state.inventoryFood.push(item);
     }
   }
   state.inventoryFood.sort((a, b) => a.healNominal - b.healNominal);
@@ -289,12 +336,12 @@ export function parseOverview(html) {
 
 // Cada item tem data-position-x/y (1-based) e data-measurement-x/y (tamanho em
 // células). Bag = 8 colunas × 5 linhas. Retorna {512: [...], 513: [...], 514: [...], 515: [...]}.
-export function parseInventoryGrid(html) {
-  const bags = { 512: [], 513: [], 514: [], 515: [] };
+export function parseInventoryGrid(html: string): InventoryGrid {
+  const bags: InventoryGrid = { 512: [], 513: [], 514: [], 515: [] };
   const re = /<div\b[^>]*\bdata-container-number=["'](51[2-5])["'][^>]*>/g;
   for (const m of html.matchAll(re)) {
     const tag = m[0];
-    const get = (name) => {
+    const get = (name: string): string | null => {
       const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
       const mm = tag.match(r);
       return mm ? mm[1] : null;
@@ -304,7 +351,7 @@ export function parseInventoryGrid(html) {
     const y = parseInt(get('data-position-y') || '0', 10);
     const w = parseInt(get('data-measurement-x') || '1', 10);
     const h = parseInt(get('data-measurement-y') || '1', 10);
-    if (x > 0 && y > 0) bags[bag].push({ x, y, w, h });
+    if (x > 0 && y > 0) (bags[bag] as InventoryCell[]).push({ x, y, w, h });
   }
   return bags;
 }
@@ -316,8 +363,23 @@ export function parseInventoryGrid(html) {
 // Em vez de delimitar o bloco por `</div></div>` (frágil — packageItem tem 5
 // fechos), pareamos `name="packages[]" value="N"` ao `<div ... data-container-number="-N">`
 // que sempre vem logo a seguir, e dali achamos o item div interno.
-export function parsePackages(html) {
-  const out = [];
+
+export interface PackageItem {
+  packageId: number;
+  contentType: number;
+  level: number | null;
+  priceGold: number | null;
+  quality: number | null;
+  name: string | null;
+  healNominal: number;
+  from: number;
+  fromX: number;
+  fromY: number;
+  measurement: { w: number; h: number };
+}
+
+export function parsePackages(html: string): PackageItem[] {
+  const out: PackageItem[] = [];
   const idRe = /<input[^>]*name="packages\[\]"[^>]*value="(\d+)"/g;
   for (const m of html.matchAll(idRe)) {
     const packageId = parseInt(m[1], 10);
@@ -328,7 +390,7 @@ export function parsePackages(html) {
     const wrapped = html.slice(m.index).match(wrapperRe);
     if (!wrapped) continue;
     const tag = wrapped[1];
-    const get = (name) => {
+    const get = (name: string): string | null => {
       const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
       const mm = tag.match(r);
       return mm ? mm[1] : null;
@@ -340,21 +402,24 @@ export function parsePackages(html) {
     const h = parseInt(get('data-measurement-y') || '1', 10);
     const level = parseInt(get('data-level') || '0', 10) || null;
     const priceGold = parseInt(get('data-price-gold') || '0', 10) || null;
-    const quality = get('data-quality');
+    const qualityStr = get('data-quality');
 
     const tooltipRaw = get('data-tooltip');
-    let name = null;
+    let name: string | null = null;
     let healNominal = 0;
     if (tooltipRaw) {
       try {
         const decoded = tooltipRaw
           .replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&');
-        const parsed = JSON.parse(decoded);
-        const inner = parsed && parsed[0];
-        if (inner && inner[0]) name = String(inner[0][0] || '');
+        const parsed = JSON.parse(decoded) as unknown;
+        const inner = parsed && Array.isArray(parsed) ? parsed[0] as unknown[] : null;
+        if (inner && inner[0]) name = String((inner[0] as unknown[])[0] || '');
         if (inner) {
-          const healEntry = inner.find((e) => /Usar: Cura\s+\d+/.test((e && e[0]) || ''));
-          if (healEntry) healNominal = parseInt(healEntry[0].match(/\d+/)[0], 10);
+          const healEntry = inner.find((e) => /Usar: Cura\s+\d+/.test(String((e as unknown[])?.[0] || '')));
+          if (healEntry) {
+            const hm = String((healEntry as unknown[])[0]).match(/\d+/);
+            if (hm) healNominal = parseInt(hm[0], 10);
+          }
         }
       } catch { /* ignore */ }
     }
@@ -364,7 +429,7 @@ export function parsePackages(html) {
       contentType,
       level,
       priceGold,
-      quality: quality !== null && quality !== '' ? parseInt(quality, 10) : null,
+      quality: qualityStr !== null && qualityStr !== '' ? parseInt(qualityStr, 10) : null,
       name,
       healNominal,
       from: -packageId,
@@ -381,8 +446,8 @@ export function parsePackages(html) {
 export const BAG_COLS = 8;
 export const BAG_ROWS = 5;
 
-export function findFreeBagSlot(occupied, w, h) {
-  const cells = new Set();
+export function findFreeBagSlot(occupied: InventoryCell[], w: number, h: number): { x: number; y: number } | null {
+  const cells = new Set<string>();
   for (const it of occupied) {
     for (let dy = 0; dy < it.h; dy++) {
       for (let dx = 0; dx < it.w; dx++) {
@@ -406,34 +471,39 @@ export function findFreeBagSlot(occupied, w, h) {
 
 // Merge defensivo com response JSON do servidor (heal/fight). header.* é fonte
 // de verdade quando disponível.
-export function mergeAjaxResponse(state, json) {
+export function mergeAjaxResponse(state: BotSnapshot, json: unknown): BotSnapshot {
   if (!json || typeof json !== 'object') return state;
-  const h = json.header;
+  const h = (json as Record<string, unknown>)['header'] as Record<string, unknown> | undefined;
   if (!h) return state;
 
-  if (h.health) {
-    state.hp = { value: h.health.value, max: h.health.maxValue };
+  if (h['health']) {
+    const health = h['health'] as Record<string, number>;
+    state.hp = { value: health['value'], max: health['maxValue'] };
     state.hpPercent = Math.round((state.hp.value / state.hp.max) * 100);
   }
-  if (h.gold) state.gold = h.gold.value;
-  if (h.expedition) {
-    state.expedition.points = h.expedition.points;
-    state.expedition.max = h.expedition.pointsMax;
-    if (h.expedition.cooldown) {
-      state.expedition.cooldownSec = Math.max(0, h.expedition.cooldown.end - h.expedition.cooldown.time);
+  if (h['gold']) state.gold = (h['gold'] as Record<string, number>)['value'];
+  if (h['expedition']) {
+    const exp = h['expedition'] as Record<string, unknown>;
+    state.expedition.points = exp['points'] as number;
+    state.expedition.max = exp['pointsMax'] as number;
+    if (exp['cooldown']) {
+      const cd = exp['cooldown'] as Record<string, number>;
+      state.expedition.cooldownSec = Math.max(0, cd['end'] - cd['time']);
     }
   }
-  if (h.dungeon) {
-    state.dungeon.points = h.dungeon.points;
-    state.dungeon.max = h.dungeon.pointsMax;
-    if (h.dungeon.cooldown) {
-      state.dungeon.cooldownSec = Math.max(0, h.dungeon.cooldown.end - h.dungeon.cooldown.time);
+  if (h['dungeon']) {
+    const dung = h['dungeon'] as Record<string, unknown>;
+    state.dungeon.points = dung['points'] as number;
+    state.dungeon.max = dung['pointsMax'] as number;
+    if (dung['cooldown']) {
+      const cd = dung['cooldown'] as Record<string, number>;
+      state.dungeon.cooldownSec = Math.max(0, cd['end'] - cd['time']);
     }
   }
   return state;
 }
 
-export function summarizeState(state) {
+export function summarizeState(state: BotSnapshot): string {
   const hpStr = state.hp
     ? `${state.hp.value}/${state.hp.max} (${state.hpPercent}%)`
     : `${state.hpPercent ?? '?'}%`;
@@ -473,7 +543,7 @@ export function summarizeState(state) {
 
 const AFFIX_CONNECTORS_RE = /^(.*?)\s+(do|da|dos|das|de)\s+(.+)$/;
 
-function splitItemName(fullName) {
+function splitItemName(fullName: string | null): { baseName: string | null; prefix: string | null; suffix: string | null } {
   if (!fullName) return { baseName: null, prefix: null, suffix: null };
   const m = fullName.match(AFFIX_CONNECTORS_RE);
   if (!m) return { baseName: fullName, prefix: null, suffix: null };
@@ -500,12 +570,12 @@ function splitItemName(fullName) {
 // "0", "-2"). Nas linhas Nível/Valor/Durabilidade o segundo elemento costuma
 // ser apenas a cor (formato simples), portanto tratamos as linhas de stat
 // (que vão pra `out.stats`) como possíveis duas-formas.
-function parseAuctionTooltipBlock(rows) {
+function parseAuctionTooltipBlock(rows: unknown[]): AuctionTooltipBlock | null {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   const first = rows[0];
   if (!Array.isArray(first)) return null;
 
-  const out = {
+  const out: AuctionTooltipBlock = {
     name: typeof first[0] === 'string' ? first[0] : '',
     nameStyle: typeof first[1] === 'string' ? first[1] : '',
     stats: [],
@@ -520,9 +590,9 @@ function parseAuctionTooltipBlock(rows) {
     const row = rows[i];
     if (!Array.isArray(row)) continue;
 
-    let label;
-    let delta = null;
-    let color = null;
+    let label: string;
+    let delta: string | null = null;
+    let color: string | null = null;
     if (Array.isArray(row[0])) {
       label = typeof row[0][0] === 'string' ? row[0][0] : '';
       delta = typeof row[0][1] === 'string' ? row[0][1] : null;
@@ -533,7 +603,7 @@ function parseAuctionTooltipBlock(rows) {
     }
     if (!label) continue;
 
-    let m;
+    let m: RegExpMatchArray | null;
     if ((m = label.match(/^Nível\s+(\d+)/))) {
       out.level = parseInt(m[1], 10);
     } else if ((m = label.match(/^Valor\s+([\d.]+)/))) {
@@ -545,25 +615,26 @@ function parseAuctionTooltipBlock(rows) {
     } else if ((m = label.match(/^Vínculo a Alma de:\s*(.+)$/))) {
       out.soulbound = m[1].trim();
     } else {
-      out.stats.push({ label, color, delta });
+      const statRow: AuctionStatRow = { label, color, delta };
+      out.stats.push(statRow);
     }
   }
   return out;
 }
 
-function parseAuctionTooltip(rawAttr) {
+function parseAuctionTooltip(rawAttr: string | null): AuctionTooltip | null {
   if (!rawAttr) return null;
-  let json;
+  let json: unknown;
   try { json = JSON.parse(decodeAttr(rawAttr)); } catch { return null; }
   if (!Array.isArray(json) || json.length === 0) return null;
   return {
-    item: parseAuctionTooltipBlock(json[0]),
-    equipped: json[1] ? parseAuctionTooltipBlock(json[1]) : null,
+    item: parseAuctionTooltipBlock(json[0] as unknown[]),
+    equipped: json[1] ? parseAuctionTooltipBlock(json[1] as unknown[]) : null,
   };
 }
 
 // Lê value de <option selected> dentro de um <select name=X>.
-function selectedOption(html, selectName) {
+function selectedOption(html: string, selectName: string): string | null {
   const re = new RegExp(
     `<select[^>]*name="${selectName}"[^>]*>([\\s\\S]*?)</select>`
   );
@@ -576,10 +647,11 @@ function selectedOption(html, selectName) {
   return sel2 ? sel2[1] : null;
 }
 
-export function parseAuctionList(html) {
-  const result = {
+export function parseAuctionList(html: string): AuctionListResult {
+  const result: AuctionListResult = {
     filter: { doll: null, qry: '', itemType: null, itemLevel: null, itemQuality: null },
     globalTimeBucket: null,
+    itemLevelOptions: [],
     listings: [],
   };
 
@@ -608,7 +680,7 @@ export function parseAuctionList(html) {
   // lvl 70 step=7) e a fórmula sozinha não dá pra reproduzir o conjunto exato
   // que o servidor aceita. Mandar valor fora dessa lista devolve listing vazia.
   const levelSelectMatch = html.match(/<select\s+name="itemLevel"[^>]*>([\s\S]*?)<\/select>/i);
-  const itemLevelOptions = [];
+  const itemLevelOptions: number[] = [];
   if (levelSelectMatch) {
     for (const m of levelSelectMatch[1].matchAll(/<option\s+value="(\d+)"/gi)) {
       const v = parseInt(m[1], 10);
@@ -634,12 +706,12 @@ export function parseAuctionList(html) {
     if (!itemTagMatch) continue;
     const attrs = itemTagMatch[1];
 
-    const get = (name) => {
+    const get = (name: string): string | null => {
       const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
       const mm = attrs.match(r);
       return mm ? mm[1] : null;
     };
-    const getInt = (name) => {
+    const getInt = (name: string): number | null => {
       const v = get(name);
       return v !== null && v !== '' ? parseInt(v, 10) : null;
     };
@@ -688,7 +760,7 @@ export function parseAuctionList(html) {
     const itemType = Number.isFinite(basisParts[0]) ? basisParts[0] : null;
     const itemSubtype = Number.isFinite(basisParts[1]) ? basisParts[1] : null;
 
-    result.listings.push({
+    const listing: AuctionListing = {
       auctionId,
       formTtype,
       itemTypeId: getInt('data-content-type'),
@@ -714,29 +786,30 @@ export function parseAuctionList(html) {
       buyoutGold,
       buyoutRubies,
       tooltip,
-    });
+    };
+    result.listings.push(listing);
   }
 
   return result;
 }
 
 // Lê HP absoluto do tooltip de #char_leben_tt: linha [["Pontos de vida:", "X / Y"], [...]].
-function parseHpFromLebenTooltip(html) {
+function parseHpFromLebenTooltip(html: string): { value: number; max: number } | null {
   const m = html.match(/id="char_leben_tt"[^>]*data-tooltip="([^"]+)"/);
   if (!m) return null;
   try {
-    const json = JSON.parse(decodeAttr(m[1]));
-    let rows = json;
+    const json: unknown = JSON.parse(decodeAttr(m[1]));
+    let rows: unknown = json;
     while (Array.isArray(rows) && rows.length === 1 && Array.isArray(rows[0])) {
-      if (Array.isArray(rows[0][0])) { rows = rows[0]; break; }
+      if (Array.isArray((rows[0] as unknown[])[0])) { rows = rows[0]; break; }
       rows = rows[0];
     }
     if (!Array.isArray(rows)) return null;
-    for (const row of rows) {
-      if (!Array.isArray(row) || !Array.isArray(row[0])) continue;
-      const label = row[0][0];
+    for (const row of rows as unknown[]) {
+      if (!Array.isArray(row) || !Array.isArray((row as unknown[])[0])) continue;
+      const label = (row as unknown[][])[0][0];
       if (typeof label === 'string' && /Pontos de vida/i.test(label)) {
-        const v = String(row[0][1] || '');
+        const v = String((row as unknown[][])[0][1] || '');
         const mm = v.match(/([\d.]+)\s*\/\s*([\d.]+)/);
         if (mm) return { value: parseInt(mm[1].replace(/\./g, ''), 10), max: parseInt(mm[2].replace(/\./g, ''), 10) };
       }
@@ -745,60 +818,50 @@ function parseHpFromLebenTooltip(html) {
   return null;
 }
 
-// Snapshot por-doll da página overview. Usa anchors do char ativo (#char_*),
-// NÃO os do header global (#header_values_*) que continuam no principal.
-// Inclui equipped[] e dollTabs[] pra a UI.
-export function parseCharSnapshot(html) {
-  const name = rxOne(html, /<div class="playername[^"]*">\s*([^<]+?)\s*<\/div>/);
-  const level = toInt(rxOne(html, /id="char_level"[^>]*>(\d+)</));
-  const hpPercent = toInt(rxOne(html, /id="char_leben"[^>]*>(\d+)\s*%/));
-  const hp = parseHpFromLebenTooltip(html);
-  const armor = toInt(rxOne(html, /id="char_panzer"[^>]*>([\d.]+)</));
-  const damage = rxOne(html, /id="char_schaden"[^>]*>([^<]+)</);
-  const stats = parseStatsBlock(html);
-  const equipped = parseEquipped(html);
-  const dollTabs = parseDollTabs(html);
-  const activeTab = dollTabs.find((t) => t.active) || null;
-  return {
-    doll: activeTab ? activeTab.doll : null,
-    role: activeTab ? activeTab.role : null,
-    name,
-    level,
-    hpPercent,
-    hp,
-    armor,
-    damage: damage ? damage.trim() : null,
-    stats,
-    equipped,
-    dollTabs,
-  };
-}
-
 // Slots equipados no paperdoll (mod=overview). container=8 é a área droppable
 // do avatar (heal target), não slot de equipment, então é omitida.
-export const EQUIPPED_SLOTS = [
-  { container: 2, contentType: 1, slot: 'helmet', label: 'Capacete' },
-  { container: 3, contentType: 2, slot: 'weapon', label: 'Arma principal' },
-  { container: 4, contentType: 4, slot: 'offhand', label: 'Arma secundária' },
-  { container: 5, contentType: 8, slot: 'armor', label: 'Armadura' },
-  { container: 6, contentType: 48, slot: 'ring1', label: 'Anel 1' },
-  { container: 7, contentType: 48, slot: 'ring2', label: 'Anel 2' },
-  { container: 9, contentType: 256, slot: 'pants', label: 'Calças' },
-  { container: 10, contentType: 512, slot: 'boots', label: 'Sapatos' },
-  { container: 11, contentType: 1024, slot: 'amulet', label: 'Amuleto' },
+export const EQUIPPED_SLOTS: { container: number; contentType: number; slot: string; label: string }[] = [
+  { container: 2,  contentType: 1,    slot: 'helmet',  label: 'Capacete' },
+  { container: 3,  contentType: 2,    slot: 'weapon',  label: 'Arma principal' },
+  { container: 4,  contentType: 4,    slot: 'offhand', label: 'Arma secundária' },
+  { container: 5,  contentType: 8,    slot: 'armor',   label: 'Armadura' },
+  { container: 6,  contentType: 48,   slot: 'ring1',   label: 'Anel 1' },
+  { container: 7,  contentType: 48,   slot: 'ring2',   label: 'Anel 2' },
+  { container: 9,  contentType: 256,  slot: 'pants',   label: 'Calças' },
+  { container: 10, contentType: 512,  slot: 'boots',   label: 'Sapatos' },
+  { container: 11, contentType: 1024, slot: 'amulet',  label: 'Amuleto' },
 ];
+
+export interface EquippedSlotResult {
+  container: number;
+  contentType: number;
+  slot: string;
+  label: string;
+  empty: boolean;
+  itemId: string | null;
+  basis?: string | null;
+  hash?: string | null;
+  level: number | null;
+  quality?: number | null;
+  priceGold?: number | null;
+  name: string | null;
+  stats?: AuctionStatRow[];
+  durability?: { value: number; max: number } | null;
+  conditioning?: { value: number; max: number } | null;
+  soulbound?: string | null;
+}
 
 // Cada slot é um <div data-container-number=N data-content-type=X data-tooltip=... data-item-id=...>.
 // Slots ocupados têm data-item-id; slots vazios têm o div mas sem item. O paperdoll também
 // renderiza um div "background" por slot sem data-item-id — distinguimos pelo presence dele.
-export function parseEquipped(html) {
-  const out = [];
+export function parseEquipped(html: string): EquippedSlotResult[] {
+  const out: EquippedSlotResult[] = [];
   for (const def of EQUIPPED_SLOTS) {
     const re = new RegExp(
       `<div\\b[^>]*\\bdata-container-number=["']${def.container}["'][^>]*>`,
       'g'
     );
-    let chosen = null;
+    let chosen: string | null = null;
     for (const m of html.matchAll(re)) {
       if (/data-item-id="\d+"/.test(m[0])) { chosen = m[0]; break; }
     }
@@ -806,19 +869,19 @@ export function parseEquipped(html) {
       out.push({ ...def, empty: true, itemId: null, name: null, level: null });
       continue;
     }
-    const get = (name) => {
+    const get = (name: string): string | null => {
       const r = new RegExp(`\\b${name}=["']([^"']*)["']`);
-      const mm = chosen.match(r);
+      const mm = chosen!.match(r);
       return mm ? mm[1] : null;
     };
     const tooltipRaw = get('data-tooltip');
-    let tooltip = null;
+    let tooltip: AuctionTooltipBlock | null = null;
     if (tooltipRaw) {
       try {
-        const json = JSON.parse(decodeAttr(tooltipRaw));
+        const json: unknown = JSON.parse(decodeAttr(tooltipRaw));
         // Equipped tooltip é [[itemRows]] (1 bloco) — leilão usa [item, equipped] (2).
         if (Array.isArray(json) && Array.isArray(json[0])) {
-          tooltip = parseAuctionTooltipBlock(json[0]);
+          tooltip = parseAuctionTooltipBlock(json[0] as unknown[]);
         }
       } catch { /* ignore */ }
     }
@@ -844,32 +907,81 @@ export function parseEquipped(html) {
   return out;
 }
 
+export interface DollTab {
+  doll: number;
+  role: string | null;
+  active: boolean;
+}
+
 // Sidebar lateral do overview (charmercsel) lista os 6 dolls disponíveis com
 // role tooltip (ex: "Batalha Básica", "Mestre Druida"). Útil pra descobrir
 // quais dolls existem antes de fazer GET pra cada um.
-export function parseDollTabs(html) {
-  const tabs = [];
+export function parseDollTabs(html: string): DollTab[] {
+  const tabs: DollTab[] = [];
   const re = /class="charmercsel(\s+active)?"[^>]*onClick="selectDoll\('[^']*doll=(\d+)[^']*'\)"[\s\S]{0,400}?charmercpic\s+doll\d+[\s\S]{0,400}?data-tooltip="([^"]+)"/g;
   for (const m of html.matchAll(re)) {
     const active = !!m[1];
     const doll = parseInt(m[2], 10);
-    let role = null;
+    let role: string | null = null;
     try {
       const decoded = m[3]
         .replace(/&quot;/g, '"').replace(/&#039;/g, "'")
         .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-      const json = JSON.parse(decoded);
-      let row = json;
+      const json: unknown = JSON.parse(decoded);
+      let row: unknown = json;
       while (Array.isArray(row) && row.length === 1 && Array.isArray(row[0])) row = row[0];
       if (Array.isArray(row) && typeof row[0] === 'string') {
         // Tooltip vem como "Mestre Druida<br /><font ...>Missão: ...</font>".
         // Pegamos a primeira linha (antes do <br>) e strip de tags residuais.
-        role = row[0].split(/<br\b/i)[0].replace(/<[^>]*>/g, '').trim();
+        role = (row[0] as string).split(/<br\b/i)[0].replace(/<[^>]*>/g, '').trim();
       }
     } catch { /* ignore */ }
     tabs.push({ doll, role, active });
   }
   return tabs;
+}
+
+export interface CharSnapshot {
+  doll: number | null;
+  role: string | null;
+  name: string | null;
+  level: number | null;
+  hpPercent: number | null;
+  hp: { value: number; max: number } | null;
+  armor: number | null;
+  damage: string | null;
+  stats: StatBlock;
+  equipped: EquippedSlotResult[];
+  dollTabs: DollTab[];
+}
+
+// Snapshot por-doll da página overview. Usa anchors do char ativo (#char_*),
+// NÃO os do header global (#header_values_*) que continuam no principal.
+// Inclui equipped[] e dollTabs[] pra a UI.
+export function parseCharSnapshot(html: string): CharSnapshot {
+  const name = rxOne(html, /<div class="playername[^"]*">\s*([^<]+?)\s*<\/div>/);
+  const level = toInt(rxOne(html, /id="char_level"[^>]*>(\d+)</));
+  const hpPercent = toInt(rxOne(html, /id="char_leben"[^>]*>(\d+)\s*%/));
+  const hp = parseHpFromLebenTooltip(html);
+  const armor = toInt(rxOne(html, /id="char_panzer"[^>]*>([\d.]+)</));
+  const damage = rxOne(html, /id="char_schaden"[^>]*>([^<]+)</);
+  const stats = parseStatsBlock(html);
+  const equipped = parseEquipped(html);
+  const dollTabs = parseDollTabs(html);
+  const activeTab = dollTabs.find((t) => t.active) || null;
+  return {
+    doll: activeTab ? activeTab.doll : null,
+    role: activeTab ? activeTab.role : null,
+    name,
+    level,
+    hpPercent,
+    hp,
+    armor,
+    damage: damage ? damage.trim() : null,
+    stats,
+    equipped,
+    dollTabs,
+  };
 }
 
 // Parser do HTML de mod=work. Detecta trabalho ativo via o ticker de countdown
@@ -883,7 +995,7 @@ export function parseDollTabs(html) {
 //
 // Quando NÃO está trabalhando, a mesma URL mostra a tela de seleção de jobs
 // (sem o `data-ticker-time-left` no padrão de countdown).
-export function parseWork(html) {
+export function parseWork(html: string): WorkStatus {
   const m = html.match(/data-ticker-time-left="(\d+)"\s+data-ticker-type="countdown"/);
   if (!m) return { active: false, secondsLeft: null, jobName: null };
 

@@ -108,6 +108,32 @@ export async function actionName(client, state, ...optional) {
 - Sanity check: `pnpm tick` (do root) antes de commit.
 - Em mudanças de parser, escrever script ad-hoc em `docs/wip/` que carrega um HTML salvo e roda `parseOverview`.
 
+## TypeScript / tsx (PR 3 em diante)
+
+- **Runtime**: `tsx` (não `tsc --emit`, não `node --strip-types`). Scripts: `pnpm tick` / `pnpm loop` via `tsx src/index.ts`.
+- **Imports literais**: manter `.js` no import string mesmo que o source seja `.ts`. `tsx` + `NodeNext` resolvem `.js → .ts` automaticamente. **Nunca mudar para `.ts`** no import — quebra a compatibilidade de ferramentas que esperam ESM puro.
+
+```ts
+// correto
+import { log } from './log.js';
+import { GladiatusClient } from './client.js';
+
+// errado
+import { log } from './log.ts';  // NOT this
+```
+
+- **`import type` na boundary shared/bot**: tipos do `@gladibot/shared` são type-only. Use sempre `import type`.
+
+```ts
+import type { BotSnapshot, WorkStatus } from '@gladibot/shared';
+// NUNCA: import { BotSnapshot } from '@gladibot/shared'; // runtime error
+```
+
+- **Sem build step**: `noEmit: true` é invariante. Nenhum `dist/` — preserva DEC-30 (CWD relativo em `db.ts`, `log.ts`, `formulas.ts`).
+- **`packages/shared` type-only**: qualquer `import` de valor (não `import type`) do shared quebra em runtime. `main` aponta para `./src/index.js` que não existe — só tipos são consumidos.
+- **`strict: true` global**: sem `@ts-ignore` — usar `// eslint-disable-next-line @typescript-eslint/no-explicit-any` com comentário justificativo quando `any` é inevitável (ex: boundary com código legado sem tipos, `node:sqlite` rows, `mercSuggestions.ts` Char vs CharacterRow).
+- **Gate obrigatório**: `pnpm typecheck` (turbo, shared antes do bot) — 0 erros antes de qualquer commit.
+
 ## Anti-padrões observados (do que NÃO fazer)
 
 - ❌ **Cachear `sh` ou `csrf` em arquivo** — sempre re-extrair via `browser.js#readSession`.

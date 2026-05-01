@@ -12,18 +12,32 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const JSON_PATH = resolve(__dirname, '..', 'data', 'affixes.json');
 
-let cache = null;
+interface AffixEntry {
+  name: string;
+  level?: number;
+  top?: boolean;
+  effects?: string[];
+  rawStats?: unknown;
+}
 
-function load() {
+interface AffixCache {
+  prefixes: AffixEntry[];
+  suffixes: AffixEntry[];
+  byName: { prefix: Map<string, AffixEntry>; suffix: Map<string, AffixEntry> };
+}
+
+let cache: AffixCache | null = null;
+
+function load(): AffixCache {
   if (cache) return cache;
   if (!existsSync(JSON_PATH)) {
     cache = { prefixes: [], suffixes: [], byName: { prefix: new Map(), suffix: new Map() } };
     return cache;
   }
-  const j = JSON.parse(readFileSync(JSON_PATH, 'utf8'));
+  const j = JSON.parse(readFileSync(JSON_PATH, 'utf8')) as { prefixes?: AffixEntry[]; suffixes?: AffixEntry[] };
   // Filtra ruído: entries de scroll levels "+1..+9" no catálogo de sufixos
   // não são sufixos reais — são níveis de encantamento.
-  const isAffix = (a) => !/^\+\d+$/.test(a.name);
+  const isAffix = (a: AffixEntry) => !/^\+\d+$/.test(a.name);
   const prefixes = (j.prefixes || []).filter(isAffix);
   const suffixes = (j.suffixes || []).filter(isAffix);
   const byName = {
@@ -34,43 +48,43 @@ function load() {
   return cache;
 }
 
-function normalizeName(s) {
+function normalizeName(s: string): string {
   return String(s || '').trim().toLowerCase();
 }
 
 // Busca um prefix pelo nome (case-insensitive). Retorna o entry do catálogo
 // ou null. Nomes de prefixo no leilão BR vêm idênticos ao catálogo EN.
-export function lookupPrefix(name) {
+export function lookupPrefix(name: string | null | undefined): AffixEntry | null {
   if (!name) return null;
   const c = load();
-  return c.byName.prefix.get(normalizeName(name)) || null;
+  return c.byName.prefix.get(normalizeName(name)) ?? null;
 }
 
 // Busca um suffix pelo nome inteiro ("do Sofrimento") OU pelo "tail" sem
 // conector ("Sofrimento"). Hoje quase nunca acha porque o catálogo é EN —
 // retorna null pra esses casos. Quando tivermos mapping PT↔EN (DEBT-06),
 // melhora.
-export function lookupSuffix(name) {
+export function lookupSuffix(name: string | null | undefined): AffixEntry | null {
   if (!name) return null;
   const c = load();
   const direct = c.byName.suffix.get(normalizeName(name));
   if (direct) return direct;
   const tail = String(name).replace(/^(do|da|dos|das|de)\s+/i, '');
-  return c.byName.suffix.get(normalizeName(tail)) || null;
+  return c.byName.suffix.get(normalizeName(tail)) ?? null;
 }
 
 // Enriquece uma listing já parseada com referências do catálogo.
 // Mutates and returns the listing for convenience.
-export function enrichListingWithAffixes(listing) {
-  const p = lookupPrefix(listing.prefix);
-  const s = lookupSuffix(listing.suffix);
+export function enrichListingWithAffixes(listing: Record<string, unknown>): Record<string, unknown> {
+  const p = lookupPrefix(listing.prefix as string | null);
+  const s = lookupSuffix(listing.suffix as string | null);
   listing.prefixCatalog = p
     ? { name: p.name, level: p.level, top: !!p.top, effects: p.effects, rawStats: p.rawStats }
     : null;
   listing.suffixCatalog = s
     ? { name: s.name, level: s.level, top: !!s.top, effects: s.effects, rawStats: s.rawStats }
     : null;
-  listing.topAny = !!(p?.top || s?.top);
+  listing.topAny = !!(p?.top ?? s?.top);
   listing.affixCoverage =
     (p ? 1 : 0) + (s ? 1 : 0); // 0 = nenhum, 1 = parcial, 2 = ambos no catálogo
   return listing;

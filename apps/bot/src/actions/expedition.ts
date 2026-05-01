@@ -1,8 +1,10 @@
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { isActionsEnabled } from '../botState.js';
+import type { GladiatusClient } from '../client.js';
+import type { BotSnapshot } from '@gladibot/shared';
 
-export async function attackExpedition(client, state) {
+export async function attackExpedition(client: GladiatusClient, state: BotSnapshot): Promise<{ acted: boolean; reason?: string; raw?: unknown }> {
   if (!isActionsEnabled()) {
     return { acted: false, reason: 'actions disabled' };
   }

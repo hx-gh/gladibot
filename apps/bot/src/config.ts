@@ -3,16 +3,62 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// apps/bot/src/config.js -> repo root = three levels up
+// apps/bot/src/config.ts -> repo root = three levels up
 const repoRoot = path.resolve(__dirname, "..", "..", "..");
 dotenv.config({ path: path.join(repoRoot, ".env") });
 
-function bool(s, def = false) {
+function bool(s: string | undefined, def = false): boolean {
   if (s === undefined) return def;
   return /^(1|true|yes|on)$/i.test(s);
 }
 
-export const config = {
+export interface Config {
+  baseUrl: string;
+  lobbyUrl: string;
+  browser: {
+    userDataDir: string;
+    channel: string;
+    headless: boolean;
+  };
+  expedition: {
+    location: number;
+    stage: number;
+  };
+  dungeon: {
+    location: number;
+    skipBoss: boolean;
+  };
+  heal: {
+    thresholdPct: number;
+    autobuy: {
+      enabled: boolean;
+      target: number;
+      minRatio: number;
+      maxBudgetPerTick: number;
+    };
+  };
+  packages: {
+    enabled: boolean;
+  };
+  work: {
+    job: number;
+    hours: number;
+  };
+  loop: {
+    tickMinMs: number;
+  };
+  actions: {
+    enabled: boolean;
+  };
+  ui: {
+    enabled: boolean;
+    port: number;
+    autoOpen: boolean;
+  };
+  logLevel: string;
+}
+
+export const config: Config = {
   baseUrl: process.env.BASE_URL || 'https://s62-br.gladiatus.gameforge.com',
   lobbyUrl: process.env.LOBBY_URL || 'https://lobby.gladiatus.gameforge.com/',
   browser: {

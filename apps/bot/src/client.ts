@@ -1,26 +1,42 @@
+import type { Page } from 'playwright';
 import { config } from './config.js';
 import { log } from './log.js';
 import { refreshSession } from './browser.js';
 
+export interface Session {
+  sh: string;
+  csrf: string;
+}
+
 export class SessionExpiredError extends Error {
-  constructor(msg) {
+  constructor(msg: string) {
     super(msg);
     this.name = 'SessionExpiredError';
   }
+}
+
+interface ExecOptions {
+  headers?: Record<string, string>;
+  noXhr?: boolean;
+  form?: Record<string, string>;
 }
 
 // HTTP client backed by Playwright's APIRequestContext (page.request),
 // so cookies are shared with the browser and the session lives as long
 // as the persistent context does.
 export class GladiatusClient {
-  constructor(page, session) {
+  page: Page;
+  session: Session;
+  base: string;
+
+  constructor(page: Page, session: Session) {
     this.page = page;
     this.session = session; // { sh, csrf } — mutated on refresh
     this.base = config.baseUrl;
   }
 
-  buildUrl(path, params = {}) {
-    const u = new URL(path, this.base);
+  buildUrl(urlPath: string, params: Record<string, string | number | undefined | null> = {}): string {
+    const u = new URL(urlPath, this.base);
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null) u.searchParams.set(k, String(v));
     }
@@ -28,12 +44,12 @@ export class GladiatusClient {
     return u.toString();
   }
 
-  async _exec(method, url, options, attempt = 0) {
+  async _exec(method: string, url: string, options: ExecOptions, attempt = 0): Promise<unknown> {
     const fn = method === 'POST' ? 'post' : 'get';
     // noXhr=true: emit a "real" navigation request (omit x-requested-with).
     // Used for endpoints that branch on AJAX vs navigation server-side, e.g.
     // mod=overview&doll=N which only switches the active doll on real GETs.
-    const baseHeaders = options.noXhr
+    const baseHeaders: Record<string, string> = options.noXhr
       ? { 'x-csrf-token': this.session.csrf }
       : { 'x-csrf-token': this.session.csrf, 'x-requested-with': 'XMLHttpRequest' };
     const { noXhr: _ignore, ...passOptions } = options;
@@ -70,21 +86,21 @@ export class GladiatusClient {
     return text;
   }
 
-  async getHtml(path, params) {
+  async getHtml(urlPath: string, params?: Record<string, string | number | undefined | null>): Promise<string> {
     // For HTML pages we NAVIGATE (so the page's JS runs and the DOM is fully
     // populated). page.request is HTTP-only and would skip JS — that breaks
     // any field rendered client-side.
-    const url = this.buildUrl(path, params);
+    const url = this.buildUrl(urlPath, params);
     log.debug('NAVIGATE', url);
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
     const html = await this.page.content();
     if (config.logLevel === 'debug') {
       try {
         const fs = await import('node:fs');
-        const path = await import('node:path');
+        const nodePath = await import('node:path');
         const outDir = 'docs/wip';
         fs.mkdirSync(outDir, { recursive: true });
-        fs.writeFileSync(path.join(outDir, 'last-overview.html'), html);
+        fs.writeFileSync(nodePath.join(outDir, 'last-overview.html'), html);
       } catch (_) { /* non-fatal */ }
     }
     return html;
@@ -94,21 +110,29 @@ export class GladiatusClient {
   // / inspection so you don't race with the orchestrator's `getHtml` (which
   // would cause both navigations to abort each other). JS won't run, so any
   // client-side rendering is missing, but server-rendered markup is intact.
-  async fetchRawHtml(path, params, opts = {}) {
-    return this._exec('GET', this.buildUrl(path, params), {
+  async fetchRawHtml(
+    urlPath: string,
+    params?: Record<string, string | number | undefined | null>,
+    opts: { noXhr?: boolean } = {}
+  ): Promise<unknown> {
+    return this._exec('GET', this.buildUrl(urlPath, params), {
       headers: { accept: 'text/html, */*' },
       noXhr: opts.noXhr === true,
     });
   }
 
-  getAjax(path, params) {
-    return this._exec('GET', this.buildUrl(path, { ...params, a: Date.now() }), {
+  getAjax(urlPath: string, params?: Record<string, string | number | undefined | null>): Promise<unknown> {
+    return this._exec('GET', this.buildUrl(urlPath, { ...params, a: Date.now() }), {
       headers: { accept: 'text/javascript, text/html, application/xml, text/xml, */*' },
     });
   }
 
-  postForm(path, params, body = {}) {
-    return this._exec('POST', this.buildUrl(path, params), {
+  postForm(
+    urlPath: string,
+    params?: Record<string, string | number | undefined | null>,
+    body: Record<string, string | number | boolean | undefined | null> = {}
+  ): Promise<unknown> {
+    return this._exec('POST', this.buildUrl(urlPath, params), {
       headers: {
         accept: 'application/json, text/javascript, */*; q=0.01',
         origin: this.base,
@@ -118,8 +142,8 @@ export class GladiatusClient {
   }
 }
 
-function stringifyValues(obj) {
-  const out = {};
+function stringifyValues(obj: Record<string, string | number | boolean | undefined | null>): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(obj)) out[k] = String(v);
   return out;
 }

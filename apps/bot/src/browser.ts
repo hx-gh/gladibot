@@ -1,10 +1,11 @@
-import { chromium } from 'playwright';
+import { chromium, type Page, type BrowserContext } from 'playwright';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { log } from './log.js';
+import type { Session } from './client.js';
 
-export async function launch() {
+export async function launch(): Promise<{ ctx: BrowserContext; page: Page }> {
   const dir = path.resolve(config.browser.userDataDir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
@@ -36,7 +37,7 @@ export async function launch() {
 }
 
 // Returns true if the page is the in-game (logged in on the configured server).
-function isInGame(page) {
+function isInGame(page: Page): boolean {
   try {
     return page.url().startsWith(`${config.baseUrl}/game/index.php`);
   } catch {
@@ -47,7 +48,7 @@ function isInGame(page) {
 // Polls all pages of the context and resolves with the first one that lands on
 // the in-game URL. Handles the lobby-opens-new-tab flow (game opens in a sibling
 // page, not in the lobby page itself).
-function waitForGamePage(ctx, intervalMs = 500) {
+function waitForGamePage(ctx: BrowserContext, intervalMs = 500): Promise<Page> {
   return new Promise((resolve) => {
     const tick = () => {
       for (const p of ctx.pages()) {
@@ -62,9 +63,9 @@ function waitForGamePage(ctx, intervalMs = 500) {
 // Opens the lobby URL. Returns the page that is in-game — may be the same one
 // passed in, or a NEW tab opened when the user clicked "Jogar" in the lobby.
 // Caller must use the returned page from there on (not the original).
-export async function ensureLoggedIn(ctx, initialPage) {
+export async function ensureLoggedIn(ctx: BrowserContext, initialPage: Page): Promise<Page> {
   log.info(`Opening lobby: ${config.lobbyUrl}`);
-  await initialPage.goto(config.lobbyUrl, { waitUntil: 'domcontentloaded' }).catch((e) => {
+  await initialPage.goto(config.lobbyUrl, { waitUntil: 'domcontentloaded' }).catch((e: Error) => {
     log.warn(`lobby goto warning: ${e.message}`);
   });
 
@@ -98,7 +99,7 @@ export async function ensureLoggedIn(ctx, initialPage) {
 //   <meta name="csrf-token" content="<HEX64>">
 //   var secureHash = "<HEX32>";
 //   ?sh=<HEX32> em todos os links/URL
-export async function readSession(page) {
+export async function readSession(page: Page): Promise<Session> {
   await page.goto(`${config.baseUrl}/game/index.php?mod=overview`, {
     waitUntil: 'domcontentloaded',
   });

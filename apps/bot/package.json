@@ -6,18 +6,25 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "tick": "node src/index.js --once",
-    "loop": "node src/index.js --loop",
-    "ui": "node src/index.js --loop",
+    "tick": "tsx src/index.ts --once",
+    "loop": "tsx src/index.ts --loop",
+    "ui": "tsx src/index.ts --loop",
+    "typecheck": "tsc -p tsconfig.json",
     "postinstall": "playwright install msedge || playwright install chromium"
   },
   "engines": {
     "node": ">=18.17"
   },
   "dependencies": {
+    "@gladibot/shared": "workspace:*",
     "dotenv": "^17.0.0",
     "express": "^5.2.1",
     "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
   }
 }

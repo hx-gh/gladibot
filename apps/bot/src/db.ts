@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
 import { log } from './log.js';
+import type { CharacterRow, EquippedItemRow, DollId } from '@gladibot/shared';
 
 // Estado atual (SEM histórico) — upsert por doll/slot. Schema simples,
 // otimizado pra "qual o gear de cada char agora". Snapshot histórico, se
@@ -47,9 +48,9 @@ CREATE TABLE IF NOT EXISTS equipped_items (
 );
 `;
 
-let db = null;
+let db: DatabaseSync | null = null;
 
-export function getDb() {
+export function getDb(): DatabaseSync {
   if (db) return db;
   const dbPath = path.resolve('data/state.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -85,9 +86,45 @@ ON CONFLICT(doll, slot) DO UPDATE SET
 `;
 
 // node:sqlite não aceita undefined nos params nomeados — precisa ser null/string/number.
-function n(v) { return v === undefined ? null : v; }
+function n<T>(v: T | undefined): T | null {
+  return v === undefined ? null : v;
+}
 
-export function persistCharacters(chars) {
+// Shape loosely typed since it comes from parser output (not fully typed yet)
+type ParsedChar = {
+  doll: number;
+  role?: string | null;
+  name?: string | null;
+  level?: number | null;
+  hp?: { value: number; max: number } | null;
+  hpPercent?: number | null;
+  armor?: number | null;
+  damage?: string | null;
+  stats?: Record<string, unknown>;
+  equipped?: ParsedEquipped[];
+  error?: boolean;
+};
+
+type ParsedEquipped = {
+  slot: string;
+  label?: string | null;
+  container?: number | null;
+  contentType?: number | null;
+  itemId?: string | null;
+  basis?: string | null;
+  hash?: string | null;
+  level?: number | null;
+  quality?: number | null;
+  priceGold?: number | null;
+  name?: string | null;
+  stats?: unknown[];
+  durability?: { value: number; max: number } | null;
+  conditioning?: { value: number; max: number } | null;
+  soulbound?: string | null;
+  empty?: boolean;
+};
+
+export function persistCharacters(chars: ParsedChar[]): void {
   const dbi = getDb();
   const now = Date.now();
   const upsertChar = dbi.prepare(upsertCharSql);
@@ -144,52 +181,57 @@ export function persistCharacters(chars) {
 // vêm já no formato { label, color } herdado do parser do paperdoll
 // (parseAuctionTooltipBlock). Usado pelo recomendador de upgrade dos mercs:
 // evita re-fetch HTTP do char inteiro pra fazer a comparação localmente.
-export function readEquippedBlock(doll, slot) {
+export function readEquippedBlock(doll: number, slot: string): {
+  name: string | null;
+  level: number | null;
+  quality: number | null;
+  stats: unknown[];
+} | null {
   const dbi = getDb();
-  const row = dbi.prepare('SELECT * FROM equipped_items WHERE doll = ? AND slot = ?').get(doll, slot);
-  if (!row || row.empty) return null;
+  const row = dbi.prepare('SELECT * FROM equipped_items WHERE doll = ? AND slot = ?').get(doll, slot) as Record<string, unknown> | undefined;
+  if (!row || row['empty']) return null;
   return {
-    name: row.name,
-    level: row.level,
-    quality: row.quality,
-    stats: JSON.parse(row.stats_json || '[]'),
+    name: row['name'] as string | null,
+    level: row['level'] as number | null,
+    quality: row['quality'] as number | null,
+    stats: JSON.parse((row['stats_json'] as string | null) || '[]') as unknown[],
   };
 }
 
-export function readAllCharacters() {
+export function readAllCharacters(): CharacterRow[] {
   const dbi = getDb();
-  const chars = dbi.prepare('SELECT * FROM characters ORDER BY doll').all();
-  const items = dbi.prepare('SELECT * FROM equipped_items ORDER BY doll, slot').all();
-  return chars.map((c) => ({
-    doll: c.doll,
-    role: c.role,
-    name: c.name,
-    level: c.level,
-    hp: c.hp_value !== null ? { value: c.hp_value, max: c.hp_max } : null,
-    hpPercent: c.hp_percent,
-    armor: c.armor,
-    damage: c.damage,
-    stats: JSON.parse(c.stats_json || '{}'),
+  const chars = dbi.prepare('SELECT * FROM characters ORDER BY doll').all() as Record<string, unknown>[];
+  const items = dbi.prepare('SELECT * FROM equipped_items ORDER BY doll, slot').all() as Record<string, unknown>[];
+  return chars.map((c): CharacterRow => ({
+    doll: c['doll'] as DollId,
+    role: (c['role'] as string | null) as import('@gladibot/shared').MercRole,
+    name: c['name'] as string | null,
+    level: c['level'] as number | null,
+    hp: c['hp_value'] !== null ? { value: c['hp_value'] as number, max: c['hp_max'] as number } : null,
+    hpPercent: c['hp_percent'] as number | null,
+    armor: c['armor'] as number | null,
+    damage: c['damage'] as string | null,
+    stats: JSON.parse((c['stats_json'] as string | null) || '{}') as Record<string, unknown>,
     equipped: items
-      .filter((i) => i.doll === c.doll)
-      .map((i) => ({
-        slot: i.slot,
-        label: i.label,
-        container: i.container,
-        contentType: i.content_type,
-        itemId: i.item_id,
-        basis: i.basis,
-        hash: i.hash,
-        level: i.level,
-        quality: i.quality,
-        priceGold: i.price_gold,
-        name: i.name,
-        stats: JSON.parse(i.stats_json || '[]'),
-        durability: i.durability_json ? JSON.parse(i.durability_json) : null,
-        conditioning: i.conditioning_json ? JSON.parse(i.conditioning_json) : null,
-        soulbound: i.soulbound,
-        empty: !!i.empty,
+      .filter((i) => i['doll'] === c['doll'])
+      .map((i): EquippedItemRow => ({
+        slot: i['slot'] as string,
+        label: i['label'] as string | null,
+        container: i['container'] as number | null,
+        contentType: i['content_type'] as number | null,
+        itemId: i['item_id'] as string | null,
+        basis: i['basis'] as string | null,
+        hash: i['hash'] as string | null,
+        level: i['level'] as number | null,
+        quality: i['quality'] as number | null,
+        priceGold: i['price_gold'] as number | null,
+        name: i['name'] as string | null,
+        stats: JSON.parse((i['stats_json'] as string | null) || '[]') as import('@gladibot/shared').AuctionStatRowLike[],
+        durability: i['durability_json'] ? JSON.parse(i['durability_json'] as string) as { value: number; max: number } : null,
+        conditioning: i['conditioning_json'] ? JSON.parse(i['conditioning_json'] as string) as { value: number; max: number } : null,
+        soulbound: i['soulbound'] as string | null,
+        empty: !!(i['empty']),
       })),
-    updatedAt: c.updated_at,
+    updatedAt: c['updated_at'] as number,
   }));
 }
