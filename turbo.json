@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "tick": {
+      "cache": false,
+      "persistent": false
+    },
+    "loop": {
+      "cache": false,
+      "persistent": true
+    },
+    "ui": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

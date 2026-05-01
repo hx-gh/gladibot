@@ -74,7 +74,7 @@ chore(deps): atualizar playwright para 1.50
 
 | Escopo     | Cobre                                                       |
 |------------|-------------------------------------------------------------|
-| `bot`      | `src/` hoje; futuro `apps/bot/` (Node + Playwright + AJAX)  |
+| `bot`      | `apps/bot/src/` (Node + Playwright + AJAX)                  |
 | `web`      | Futuro `apps/web/` (Next.js + Tailwind + shadcn)            |
 | `shared`   | Futuro `packages/shared/` (tipos compartilhados)            |
 | `docs`     | `docs/**`, `README.md`                                      |
@@ -109,7 +109,7 @@ Se a resposta é não, reescreva antes de subir o PR (`git commit --amend` ou re
 
 Antes de commitar uma mudança:
 
-1. ✅ **Bot roda** com `node src/index.js --once` sem erro.
+1. ✅ **Bot roda** com `pnpm tick` (do root) sem erro.
 2. ✅ **Sem `console.log` esquecido** — usar `log.debug/info/warn/error`.
 3. ✅ **Sem segredos** no diff: cookie strings, CSRF tokens, sh, paths absolutos do home do dev.
 4. ✅ **Docs atualizadas:**
@@ -141,7 +141,7 @@ Para débito de 1 arquivo, hot-fix óbvio, edição de doc:
 1. **Pensar/explorar:** scratchpad em `docs/wip/<slug>.md` (gitignored).
 2. **Mapear** (se for fluxo novo do jogo): browsermcp via Claude Code + DevTools Network.
 3. **Implementar:** seguir padrões em `prompt.bot.md` + `docs/CODE_PATTERNS.md`.
-4. **Smoke:** `node src/index.js --once`.
+4. **Smoke:** `pnpm tick`.
 5. **Atualizar docs** (DoD acima).
 6. **`/checkpoint`** — `doc-keeper` faz sync mecânico.
 7. **Commit** com Conventional Commit estrito; **sem** `Co-Authored-By: Claude`.

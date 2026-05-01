@@ -13,27 +13,27 @@ date: 2026-05-01
 
 - Node.js 18+ (ESM, `"type": "module"`)
 - Playwright 1.49 (channel `msedge`, persistent context em `browser-data/`)
-- Express (UI atual `src/ui/server.js`; será trocado por Next.js em PR futuro)
+- Express (UI atual `apps/bot/src/ui/server.js`; será trocado por Next.js em PR futuro)
 - TypeScript será adicionado no PR `refactor/bot-typescript` — até lá, JS puro com `// @ts-check` opcional
 - node:sqlite (built-in) para persistência local — **não** `better-sqlite3` (build native quebra neste host)
 
 ## Arquitetura — referência rápida
 
 ```
-.env → src/config.js
-              │
-              ▼
-     src/browser.js ──▶ Playwright (Edge persistent context)
-              │             ├─ login Google manual (1x)
-              │             └─ readSession() pega sh+csrf do DOM
-              ▼
-     src/client.js ──▶ page.request.get/post ──▶ Gladiatus AJAX
-              ▲                                    (cookies do browser)
-              │
-src/index.js ──▶ src/orchestrator.js ──▶ src/actions/{exp,dung,heal,work,...}.js
-                       ▲
-                       │ lê
-                  src/state.js (parser de overview HTML + merge JSON)
+.env (root do repo) → apps/bot/src/config.js
+                                │
+                                ▼
+              apps/bot/src/browser.js ──▶ Playwright (Edge persistent context)
+                              │             ├─ login Google manual (1x)
+                              │             └─ readSession() pega sh+csrf do DOM
+                              ▼
+              apps/bot/src/client.js ──▶ page.request.get/post ──▶ Gladiatus AJAX
+                              ▲                                      (cookies do browser)
+                              │
+apps/bot/src/index.js ──▶ apps/bot/src/orchestrator.js ──▶ apps/bot/src/actions/{exp,dung,heal,work,...}.js
+                                   ▲
+                                   │ lê
+                            apps/bot/src/state.js (parser de overview HTML + merge JSON)
 ```
 
 Detalhe completo em `CLAUDE.md` § Arquitetura. Componente por componente em `docs/PROJECT_STATE.md`.
@@ -108,11 +108,11 @@ Sem essa checagem, ação pode disparar quando UI tiver pausado o bot.
 | Tipo | Lugar |
 |---|---|
 | Novo endpoint AJAX | Captar via DevTools → catalogar em `docs/endpoints.md` → implementar action |
-| Nova action | `src/actions/<nome>.js` (ou futuro `apps/bot/src/actions/`) |
-| Novo ramo no tick | `src/orchestrator.js` — respeitar ordem heal → exp → masm → work → afk fallback |
-| Novo campo do snapshot | `src/state.js` parser + `src/botState.js` shape |
-| Nova UI | hoje `src/ui/server.js` + `public/`; futuro `apps/web/src/app/` (Next.js App Router) |
-| Catálogo (afixos, fórmulas) | `data/<nome>.json` + validar empiricamente contra HTML real |
+| Nova action | `apps/bot/src/actions/<nome>.js` |
+| Novo ramo no tick | `apps/bot/src/orchestrator.js` — respeitar ordem heal → exp → masm → work → afk fallback |
+| Novo campo do snapshot | `apps/bot/src/state.js` parser + `apps/bot/src/botState.js` shape |
+| Nova UI | hoje `apps/bot/src/ui/server.js` + `public/`; futuro `apps/web/src/app/` (Next.js App Router) |
+| Catálogo (afixos, fórmulas) | `apps/bot/data/<nome>.json` + validar empiricamente contra HTML real |
 
 ---
 
@@ -120,7 +120,7 @@ Sem essa checagem, ação pode disparar quando UI tiver pausado o bot.
 
 Antes de declarar tarefa pronta:
 
-1. **Smoke:** `node src/index.js --once` (ou `pnpm --filter bot tick` pós-monorepo) sem erro fatal.
+1. **Smoke:** `pnpm tick` (do root) ou `pnpm --filter @gladibot/bot tick` sem erro fatal.
 2. **Type-check** (quando TS instalado): `pnpm --filter bot typecheck`.
 3. **Build web** (quando `apps/web` existir): `pnpm --filter web build`.
 4. **Validate docs:** `bash docs/validate-docs.sh` → 0 erros.

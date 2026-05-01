@@ -43,17 +43,12 @@ Código real implementando o plano. Após cada bloco, **reescreva** `STATE` em `
 
 ## Comandos (Bash)
 
-Pré-monorepo (estrutura atual `src/`):
-```
-node src/index.js --once
-node src/index.js --loop
-```
-
-Pós-monorepo (após PR 2):
 ```
 pnpm install
-pnpm --filter bot tick
-pnpm --filter bot loop
+pnpm tick
+pnpm loop
+pnpm --filter @gladibot/bot tick
+pnpm --filter @gladibot/bot loop
 pnpm --filter web build
 pnpm --filter web dev
 git diff
@@ -65,7 +60,7 @@ git log --oneline -10 -- <path>
 
 ## DoD (gates ativos)
 
-- **Smoke:** `node src/index.js --once` ou `pnpm --filter bot tick` — precisa terminar sem erro fatal.
+- **Smoke:** `pnpm tick` ou `pnpm --filter @gladibot/bot tick` — precisa terminar sem erro fatal.
 - **Type-check** (quando TS instalado): `pnpm --filter bot typecheck`.
 - **Build web** (quando `apps/web` existir): `pnpm --filter web build`.
 

@@ -11,40 +11,41 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 
 - Node.js 18+ (ESM, `"type": "module"`)
 - Playwright 1.49 (channel `msedge`, persistent context)
-- dotenv 16
+- dotenv 17 (lê `.env` do root do repo via path absoluto em `apps/bot/src/config.js`)
+- pnpm 10.32.1 + TurboRepo 2.x (monorepo — PR 2 mergeado)
 - Sem lib de teste por enquanto (1 dev, MVP)
 
-> **Em migração (roadmap):** monorepo TurboRepo+pnpm, TypeScript em `apps/bot` e `apps/web`, Next.js 15 App Router + Tailwind + shadcn/ui. Framework Claude com agentes tech-architect/bot-builder/code-reviewer instalado (PR 1 mergeado). Ver `docs/wip/framework-monorepo-migration.md` (scratchpad ativo — PRs 1-5). Ver DEC-28.
+> **Em migração (roadmap):** TypeScript em `apps/bot` e `apps/web`, Next.js 15 App Router + Tailwind + shadcn/ui. Framework Claude com agentes tech-architect/bot-builder/code-reviewer instalado (PR 1 mergeado). Monorepo skeleton (PR 2 pronto pra mergear). Ver `docs/wip/framework-monorepo-migration.md` (scratchpad ativo — PRs 3-5). Ver DEC-28, DEC-29, DEC-30.
 
 ## Componentes
 
 | Componente | Status | Notas |
 |---|---|---|
-| `src/browser.js` (Playwright bootstrap) | ✅ Pronto | Detecta login multi-aba; readSession navega overview pra extrair `sh`+`csrf` (meta tag) |
-| `src/client.js` (HTTP + retry em 401/403) | ✅ Pronto | `getHtml` via `page.goto` (JS roda); auto-refresh CSRF |
-| `src/state.js` (parser overview) | ✅ Pronto | Parser por IDs específicos (gold/HP/pontos/cooldowns/inventário); parsers de char/paperdoll/leilão dual-format — validado em produção |
-| `src/itemCompare.js` (pareamento e consolidação) | ✅ Pronto | `pairStats(itemBlock, equippedBlock, {useGameDelta})`, `consolidateMainStats`, `summarizeRows` com score lvlDiff/5, `buildComparison`. Dual-format parsing, flat+% consolidação pra 6 atributos (DEC-11, DEC-12) |
-| `src/actions/heal.js` | ✅ Pronto | Greedy "não extrapolar" |
-| `src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
-| `src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai. `parseDungeonFights` marca `isBoss` via `<div class="map_label">Chefe`; `DUNGEON_SKIP_BOSS` (default true) filtra boss e dispara `cancelDungeon`+`restartDungeon` quando só sobra boss (DEBT-10) |
-| `src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`); aceita `opts={force,jobType,hours}` pra fallback AFK |
-| `src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → top-off comida (packages + autobuy leilão) → AFK fallback se ainda lowHp+noFood → exp → masm → work fallback → heal post; chama `setSnapshot` a cada parse |
-| `src/actions/packages.js` | ✅ Pronto | `parsePackages` + `openPackages/openHealPackages`: drena `mod=packages` movendo cada item pra slot livre via `findFreeBagSlot` (8×5 grid). `from=-packageId`, mesmo POST `mod=inventory&submod=move` da cura |
-| `src/actions/buyHeal.js` | ✅ Pronto | Auto-compra de cura no leilão (`itemType=7`). Filtra `healNominal/buyoutGold ≥ AUTOBUY_HEAL_MIN_RATIO` (default 3), buyout-only, ignora listings com lance. Loop até `AUTOBUY_HEAL_TARGET` (default 5) ou budget per-tick exausto |
-| `src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
-| `src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
-| `src/actions/auction.js` | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})` + `placeBid` plugado via UI (POST `/api/auction/bid`). Marca ID em `botState.myBidAuctionIds` pra parser cobrir gap até sample real |
-| `src/mercSuggestions.js` (recomendador v2) | ✅ Pronto | DEC-20. Score magnitude-weighted (`statWeight × roleBoost × Δ`), waste check, cost efficiency, top affix bonus, dedup ring1/ring2, soulbound flag. Exporta `enrichListingWithWaste` reusado pelo Painel 2 |
-| `src/formulas.js` (evaluator) | ✅ Pronto | Mini-evaluator de `data/formulas.json`. `auctionLevelRange(playerLevel)` aplica `auction-min-level` / `auction-max-level` pra popular `<select>` dinamicamente |
-| `src/actions/characters.js` | ✅ Pronto | `fetchCharacter(client, doll)` + `fetchAllCharacters(client)`. Varre doll=1..6 em paralelo. Usa `noXhr: true` (DEC-17) |
-| `src/db.js` (SQLite via node:sqlite) | ✅ Pronto | DEC-18. Schema characters + equipped_items, upsert sem histórico. WAL mode. data/state.db gitignored |
-| `src/state.js` parsers de char (paperdoll) | ✅ Pronto | `parseEquipped`, `parseDollTabs`, `parseCharSnapshot`. 9 slots equipados (helm/weapon/offhand/armor/ring1/ring2/pants/boots/amulet) |
-| `src/state.js` parsers de leilão | ✅ Pronto | `parseAuctionList(html)` + tooltip duplo (item + equipado) |
+| `apps/bot/src/browser.js` (Playwright bootstrap) | ✅ Pronto | Detecta login multi-aba; readSession navega overview pra extrair `sh`+`csrf` (meta tag) |
+| `apps/bot/src/client.js` (HTTP + retry em 401/403) | ✅ Pronto | `getHtml` via `page.goto` (JS roda); auto-refresh CSRF |
+| `apps/bot/src/state.js` (parser overview) | ✅ Pronto | Parser por IDs específicos (gold/HP/pontos/cooldowns/inventário); parsers de char/paperdoll/leilão dual-format — validado em produção |
+| `apps/bot/src/itemCompare.js` (pareamento e consolidação) | ✅ Pronto | `pairStats(itemBlock, equippedBlock, {useGameDelta})`, `consolidateMainStats`, `summarizeRows` com score lvlDiff/5, `buildComparison`. Dual-format parsing, flat+% consolidação pra 6 atributos (DEC-11, DEC-12) |
+| `apps/bot/src/actions/heal.js` | ✅ Pronto | Greedy "não extrapolar" |
+| `apps/bot/src/actions/expedition.js` | ✅ Pronto | `mod=location&submod=attack` |
+| `apps/bot/src/actions/dungeon.js` | ✅ Pronto | `startFight` por AJAX + `restartDungeon` (POST `dif1=Normal`) quando boss cai. `parseDungeonFights` marca `isBoss` via `<div class="map_label">Chefe`; `DUNGEON_SKIP_BOSS` (default true) filtra boss e dispara `cancelDungeon`+`restartDungeon` quando só sobra boss (DEBT-10) |
+| `apps/bot/src/actions/work.js` | ✅ Pronto | POST `index.php?mod=work&submod=start` (`jobType`+`timeToWork`); aceita `opts={force,jobType,hours}` pra fallback AFK |
+| `apps/bot/src/orchestrator.js` (tick loop) | ✅ Pronto | Heal pre → top-off comida (packages + autobuy leilão) → AFK fallback se ainda lowHp+noFood → exp → masm → work fallback → heal post; chama `setSnapshot` a cada parse |
+| `apps/bot/src/actions/packages.js` | ✅ Pronto | `parsePackages` + `openPackages/openHealPackages`: drena `mod=packages` movendo cada item pra slot livre via `findFreeBagSlot` (8×5 grid). `from=-packageId`, mesmo POST `mod=inventory&submod=move` da cura |
+| `apps/bot/src/actions/buyHeal.js` | ✅ Pronto | Auto-compra de cura no leilão (`itemType=7`). Filtra `healNominal/buyoutGold ≥ AUTOBUY_HEAL_MIN_RATIO` (default 3), buyout-only, ignora listings com lance. Loop até `AUTOBUY_HEAL_TARGET` (default 5) ou budget per-tick exausto |
+| `apps/bot/src/botState.js` (state in-memory + ring buffer) | ✅ Pronto | Singleton: snapshot, loopStatus, logs (ring 200) |
+| `apps/bot/src/ui/server.js` + `public/` (control panel) | ✅ Pronto | Express :3000 (127.0.0.1), polling 2s, pause/resume/tick-now; tab Leilão + endpoint `/api/auction` |
+| `apps/bot/src/actions/auction.js` | ✅ Pronto | `fetchAuctionList(client, {ttype, filter})` + `placeBid` plugado via UI (POST `/api/auction/bid`). Marca ID em `botState.myBidAuctionIds` pra parser cobrir gap até sample real |
+| `apps/bot/src/mercSuggestions.js` (recomendador v2) | ✅ Pronto | DEC-20. Score magnitude-weighted (`statWeight × roleBoost × Δ`), waste check, cost efficiency, top affix bonus, dedup ring1/ring2, soulbound flag. Exporta `enrichListingWithWaste` reusado pelo Painel 2 |
+| `apps/bot/src/formulas.js` (evaluator) | ✅ Pronto | Mini-evaluator de `apps/bot/data/formulas.json`. `auctionLevelRange(playerLevel)` aplica `auction-min-level` / `auction-max-level` pra popular `<select>` dinamicamente |
+| `apps/bot/src/actions/characters.js` | ✅ Pronto | `fetchCharacter(client, doll)` + `fetchAllCharacters(client)`. Varre doll=1..6 em paralelo. Usa `noXhr: true` (DEC-17) |
+| `apps/bot/src/db.js` (SQLite via node:sqlite) | ✅ Pronto | DEC-18. Schema characters + equipped_items, upsert sem histórico. WAL mode. apps/bot/data/state.db gitignored |
+| `apps/bot/src/state.js` parsers de char (paperdoll) | ✅ Pronto | `parseEquipped`, `parseDollTabs`, `parseCharSnapshot`. 9 slots equipados (helm/weapon/offhand/armor/ring1/ring2/pants/boots/amulet) |
+| `apps/bot/src/state.js` parsers de leilão | ✅ Pronto | `parseAuctionList(html)` + tooltip duplo (item + equipado) |
 | `data/affixes.json` (catálogo) | ✅ Pronto | 228 prefixos + 317 sufixos; 87 com `top:true`; effects[] estruturados |
 | `data/formulas.json` (catálogo) | ✅ Pronto | 38 fórmulas (combat/defense/critical/healing/regen/items/etc) com `expression` em JS |
 | Resiliência tick errors | ✅ Pronto | Erro dentro de tick → log.warn + retry em 30s; SessionExpiredError e bootstrap continuam fatais |
-| `src/log.js` (sink ring + arquivo) | ✅ Pronto | Console + ring buffer + `logs/session.log` truncado por sessão |
-| `gladibot-bridge.user.js` (Tampermonkey) | ✅ Pronto | Para mapeamento via MCP, não runtime |
+| `apps/bot/src/log.js` (sink ring + arquivo) | ✅ Pronto | Console + ring buffer + `apps/bot/logs/session.log` truncado por sessão |
+| Tampermonkey userscript (ad-hoc) | ✅ Pronto (abordagem) | Usado durante mapeamento de controles invisíveis via DevTools; não versionado |
 
 ## Features
 
@@ -66,7 +67,7 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Detecção de "trabalhando" via `mod=work` + gating no orchestrator (banner na UI) | 2026-04-28 |
 | UI rica: hero card (avatar+nome+lvl+HP), stats dos 6 atributos, banner de buffs (globais + pessoais), card de Treinamento com botões (gated por kill switch + ouro), redesign de layout mais denso | 2026-04-28 |
 | Painel 2 Leilão — Fase 1 (read-only): parser, action, endpoint API, UI com tabs/filtros/lista | 2026-04-28 |
-| Painel 2 Leilão — Fase 1.5 (comparação rica + recomendação): `src/itemCompare.js`, parsing dual-format, consolidação flat+%, `RECOMENDADO` por gap | 2026-04-29 |
+| Painel 2 Leilão — Fase 1.5 (comparação rica + recomendação): `apps/bot/src/itemCompare.js`, parsing dual-format, consolidação flat+%, `RECOMENDADO` por gap | 2026-04-29 |
 | Catálogo de prefixos/sufixos (`data/affixes.json`): 228 + 317 entries, top flag, scrape via curl + Playwright render | 2026-04-28 |
 | Catálogo de fórmulas (`data/formulas.json`): 38 entries com expression JS-evaluable | 2026-04-28 |
 | Resiliência: tick errors não derrubam loop (warn + retry 30s) | 2026-04-28 |
@@ -80,7 +81,8 @@ Snapshot vivo. Atualizar ao concluir feature ou ao identificar mudança de prior
 | Heartbeat de sessão durante sleep (DEC-24) — `interruptibleSleep` dispara `readSession` a cada [45s,135s] com jitter pra evitar redirect silencioso pro lobby durante inatividade | 2026-04-30 |
 | Dropdown do leilão parseado do HTML real (DEC-25) — `itemLevelOptions` extraído via `<select name="itemLevel">` no HTML cru, não por fórmula | 2026-04-30 |
 | Top-off de comida no orchestrator (DEC-26) — antes do AFK fallback, drena packages com `Usar: Cura X` (move pra bag via `from=-packageId`) e auto-compra no leilão (itemType=7, ratio heal/preço ≥ 3, buyout-only) até `AUTOBUY_HEAL_TARGET`. Resolve o "pause-pra-trabalhar" sem queimar pontos | 2026-05-01 |
-| Framework Claude adotado (PR 1) — agentes tech-architect/bot-builder/code-reviewer, comandos /implement /audit-sync /review-pr, docs/validate-docs.sh (gate), docs/reviews/, prompt.bot.md, CLAUDE.md § Framework, CONTRIBUTING.md com Conventional Commits estritos. Nenhuma mudança em `src/`. (DEC-28) | 2026-05-01 |
+| Framework Claude adotado (PR 1) — agentes tech-architect/bot-builder/code-reviewer, comandos /implement /audit-sync /review-pr, docs/validate-docs.sh (gate), docs/reviews/, prompt.bot.md, CLAUDE.md § Framework, CONTRIBUTING.md com Conventional Commits estritos. Nenhuma mudança em `apps/bot/src/`. (DEC-28) | 2026-05-01 |
+| Monorepo skeleton (PR 2) — pnpm workspaces + TurboRepo; `src/` → `apps/bot/src/`; `data/` → `apps/bot/data/`; `config.js` lê `.env` do root via path absoluto; `browser-data/` permanece no root; dotenv@17; `pnpm tick` / `pnpm loop` como comandos principais. (DEC-29) | 2026-05-01 |
 
 ### Em andamento
 
@@ -100,11 +102,12 @@ _(nenhuma)_
 
 ## Próximas Ações Sugeridas
 
-1. **Validar end-to-end no jogo** — `node src/index.js --once` cobrindo:
+1. **Mergear PR 2** (`chore/monorepo-skeleton`) em `develop` — monorepo skeleton está pronto (DEC-30).
+2. **Iniciar PR 3** (`refactor/bot-typescript`) — `tsconfig.json` em `apps/bot`; rename `.js → .ts` incremental; `packages/shared` com tipos do snapshot.
+3. **Validar end-to-end no jogo** — `pnpm --filter @gladibot/bot tick` cobrindo:
    - heal disparando com HP < 20% (start do bot e pós-luta);
    - dungeon entrando automaticamente após boss cair (POST `dif1=Normal`);
    - work iniciando com `jobType=2` quando ambos os pools zeram.
-2. **Ligar `--loop`** depois de confirmar que cada um dos três cenários acima passa.
 
 ## Métricas observadas (sessão 2026-04-28)
 

@@ -32,9 +32,9 @@ Leia `docs/wip/<slug>.md` se houver scratchpad ativo.
 
 | Mudança | Doc |
 |---|---|
-| `src/actions/<x>.js` ou `apps/bot/src/actions/<x>.js` (action nova/removida) | `docs/PROJECT_STATE.md` § Componentes + `docs/flows.md` se for parte do tick |
-| `src/state.js` mudou shape | `docs/CODE_PATTERNS.md` § Parser |
-| `src/client.js` mudou padrão | `docs/CODE_PATTERNS.md` § HTTP client |
+| `apps/bot/src/actions/<x>.js` (action nova/removida) | `docs/PROJECT_STATE.md` § Componentes + `docs/flows.md` se for parte do tick |
+| `apps/bot/src/state.js` mudou shape | `docs/CODE_PATTERNS.md` § Parser |
+| `apps/bot/src/client.js` mudou padrão | `docs/CODE_PATTERNS.md` § HTTP client |
 | Novo endpoint AJAX descoberto | `docs/endpoints.md` (método/URL/params/headers/body/response) |
 | Mudança de ordem do tick | `docs/flows.md` |
 | Decisão arquitetural permanente | `docs/DECISIONS.md` (novo `DEC-XX`) |
@@ -205,7 +205,7 @@ Usuário decide commit/push.
 **Regras do bloco PR body:**
 - Só emita se o ciclo está fechando (`docs/wip/<slug>.md` existe e a tarefa terminou). Em checkpoints intermediários, omita.
 - Máximo ~30 linhas. Sem repetir o que já está em "Repo (docs versionadas)".
-- "Test plan": só comandos verificáveis (`node src/index.js --once`, `pnpm --filter web build`, cURLs específicos). Nada genérico tipo "testar manualmente".
+- "Test plan": só comandos verificáveis (`pnpm tick`, `pnpm --filter @gladibot/bot tick`, `pnpm --filter web build`, cURLs específicos). Nada genérico tipo "testar manualmente".
 - "Riscos": cite só se houver real (mudança de regra arquitetural, breaking change, side-effect novo no jogo). "nenhum identificado" é resposta válida.
 
 ## Regras

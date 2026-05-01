@@ -67,43 +67,51 @@ Este projeto opera em modo **arquiteto + agentes**. Você fala com Claude (orque
 ## Arquitetura (resumo)
 
 ```
-.env (BASE_URL, USER_DATA_DIR, headless?)
+.env (BASE_URL, USER_DATA_DIR, headless?)   ← fica no root do repo
    │
    ▼
-src/config.js
+apps/bot/src/config.js   (carrega .env do root via path absoluto)
    │
    ▼
-src/browser.js ──▶ Playwright (Edge persistent context)
-       │             ├─ login Google manual (1x)
-       │             └─ readSession() pega sh+csrf do DOM
+apps/bot/src/browser.js ──▶ Playwright (Edge persistent context)
+       │                       ├─ login Google manual (1x)
+       │                       └─ readSession() pega sh+csrf do DOM
        ▼
-src/client.js ──▶ page.request.get/post ──▶ Gladiatus AJAX endpoints
-       ▲                                     (cookies do browser)
+apps/bot/src/client.js ──▶ page.request.get/post ──▶ Gladiatus AJAX endpoints
+       ▲                                              (cookies do browser)
        │
-src/index.js ──▶ src/orchestrator.js ──▶ src/actions/{exp,dung,heal,work}.js
-                       ▲
-                       │ lê
-                  src/state.js (parser de overview HTML + merge JSON)
+apps/bot/src/index.js ──▶ apps/bot/src/orchestrator.js ──▶ apps/bot/src/actions/{exp,dung,heal,work}.js
+                                 ▲
+                                 │ lê
+                          apps/bot/src/state.js (parser de overview HTML + merge JSON)
 ```
 
 ### Estrutura de Diretórios
 
 ```
-gladibot/
-├── src/             ← código do bot
-│   ├── index.js          entry + flags --once / --loop
-│   ├── config.js         carrega .env
-│   ├── log.js            logger leve
-│   ├── browser.js        Playwright bootstrap + readSession + refreshSession
-│   ├── client.js         HTTP client em cima de page.request, retry em 401/403
-│   ├── state.js          parser de overview + merge AJAX
-│   ├── orchestrator.js   tick: heal → expedição → masmorra → work
-│   └── actions/
-│       ├── expedition.js
-│       ├── dungeon.js
-│       ├── heal.js
-│       └── work.js
-├── docs/            ← documentação versionada
+gladibot/                    ← monorepo root (pnpm workspaces + TurboRepo)
+├── apps/
+│   └── bot/                 ← pacote @gladibot/bot
+│       ├── package.json
+│       ├── src/             ← código do bot
+│       │   ├── index.js          entry + flags --once / --loop
+│       │   ├── config.js         carrega .env do root; define userDataDir absoluto
+│       │   ├── log.js            logger leve
+│       │   ├── browser.js        Playwright bootstrap + readSession + refreshSession
+│       │   ├── client.js         HTTP client em cima de page.request, retry em 401/403
+│       │   ├── state.js          parser de overview + merge AJAX
+│       │   ├── orchestrator.js   tick: heal → expedição → masmorra → work
+│       │   └── actions/
+│       │       ├── expedition.js
+│       │       ├── dungeon.js
+│       │       ├── heal.js
+│       │       └── work.js
+│       └── data/
+│           ├── affixes.json
+│           └── formulas.json
+├── packages/                ← pacotes compartilhados (futuro)
+│   └── .gitkeep
+├── docs/                    ← documentação versionada
 │   ├── INDEX.md
 │   ├── PROJECT_STATE.md
 │   ├── DECISIONS.md
@@ -115,12 +123,15 @@ gladibot/
 │   ├── flows.md          fluxogramas
 │   ├── endpoints.md      catálogo AJAX
 │   └── wip/              scratchpads efêmeros (gitignored)
-├── .claude/         ← integração com Claude Code
-│   ├── settings.json     permissions + hook de session log
+├── .claude/               ← integração com Claude Code
+│   ├── settings.json         permissions + hook de session log
 │   ├── settings.local.json   overrides locais (gitignored se necessário)
 │   ├── commands/checkpoint.md
 │   └── agents/doc-keeper.md
-└── browser-data/    ← perfil persistente do Playwright (gitignored)
+├── package.json           ← root workspace (turbo devDep, scripts delegam ao bot)
+├── pnpm-workspace.yaml
+├── turbo.json
+└── browser-data/          ← perfil persistente do Playwright (gitignored, no root)
 ```
 
 ## Database
@@ -142,8 +153,8 @@ gladibot/
 ## Regras Arquiteturais Fundamentais
 
 ### 1. Playwright só pra sessão. Ações via AJAX
-- `src/browser.js` cuida de login + extração de `sh+csrf`. Persistent context guarda cookies entre runs.
-- `src/client.js` usa `page.request.get/post` — herda os cookies do browser, mas envia HTTP "puro". **Não** clica em botões via Playwright.
+- `apps/bot/src/browser.js` cuida de login + extração de `sh+csrf`. Persistent context guarda cookies entre runs.
+- `apps/bot/src/client.js` usa `page.request.get/post` — herda os cookies do browser, mas envia HTTP "puro". **Não** clica em botões via Playwright.
 - **Por que:** velocidade (HTTP é instantâneo, click visual é lento) + simplicidade (DOM muda, endpoints AJAX são estáveis).
 
 ### 2. CSRF é obrigatório em todo AJAX
@@ -156,7 +167,6 @@ gladibot/
 
 ### 4. Não simular cliques
 - Quando um controle não tem ref de acessibilidade (ex: `<img onclick="startFight(...)">` na masmorra), descobrir o **endpoint AJAX real** via DevTools e chamá-lo direto.
-- O `gladibot-bridge.user.js` (Tampermonkey userscript) **só serve pra mapeamento via Claude+browsermcp** durante desenvolvimento — não é parte do bot em runtime.
 
 ### 5. Sem state local persistente do bot
 - Estado canônico vem do servidor a cada tick (`GET overview` + parser). Bot é stateless entre ticks.
@@ -180,12 +190,11 @@ Ver `docs/CODE_PATTERNS.md`. Resumo:
 
 ## O que a IA PODE fazer
 
-- Adicionar/modificar `src/actions/<nome>.js` para novos fluxos do jogo.
-- Atualizar parsers em `src/state.js` quando o jogo expor novos campos.
+- Adicionar/modificar `apps/bot/src/actions/<nome>.js` para novos fluxos do jogo.
+- Atualizar parsers em `apps/bot/src/state.js` quando o jogo expor novos campos.
 - Adicionar slash commands em `.claude/commands/`.
 - Editar docs (PROJECT_STATE, DECISIONS, TECHNICAL_DEBT, memory, flows, endpoints).
 - Criar scratchpad em `docs/wip/<feature-slug>.md` durante exploração.
-- Estender `gladibot-bridge.user.js` para expor novos controles invisíveis.
 
 ## O que a IA NÃO PODE fazer
 

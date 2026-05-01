@@ -45,7 +45,7 @@ Em 401/403 (CSRF rotacionado), o bot **re-navega pra overview, extrai novo `sh`+
 
 ```bash
 cd projetos/gladibot
-npm install
+pnpm install
 # (postinstall já baixa o channel do Playwright)
 cp .env.example .env
 # o .env padrão funciona; ajuste só BASE_URL se mudar de servidor
@@ -54,7 +54,7 @@ cp .env.example .env
 ## Primeira run (login)
 
 ```bash
-node src/index.js --once
+pnpm tick
 ```
 
 Vai abrir o Edge **na lobby do Gladiatus** (`lobby.gladiatus.gameforge.com`).
@@ -70,10 +70,15 @@ O perfil fica salvo em `./browser-data/` — próximas runs já abrem logadas, m
 ## Runs subsequentes
 
 ```bash
-node src/index.js --once          # uma iteração só (debug/teste)
-node src/index.js --loop          # loop infinito até Ctrl+C, sobe UI em http://localhost:3000
-node src/index.js --loop --yes    # pula o prompt de confirmação (pra automação real)
-node src/index.js --loop --no-ui  # loop sem control panel
+pnpm tick           # uma iteração só (debug/teste)
+pnpm loop           # loop infinito até Ctrl+C, sobe UI em http://localhost:3000
+```
+
+Flags do bot passadas diretamente via `--filter` + `--`:
+
+```bash
+pnpm --filter @gladibot/bot tick -- --yes      # pula prompt de confirmação
+pnpm --filter @gladibot/bot tick -- --no-ui    # tick sem control panel
 ```
 
 ### Control panel (UI)
@@ -85,7 +90,7 @@ Em `--loop`, o bot sobe um servidor Express em `127.0.0.1:3000` e abre o browser
 - **Logs** — últimas 200 linhas (ring buffer in-memory) com filtro por nível e autoscroll.
 - **Controles** — `Tick now` força tick imediato; `Pause` interrompe o agendamento sem derrubar o browser do jogo; `Resume` retoma.
 
-Configurável via `.env`: `UI_PORT`, `UI_AUTO_OPEN`, `UI_ENABLED`. Logs também são escritos em `logs/session.log` (truncado a cada startup, gitignored).
+Configurável via `.env`: `UI_PORT`, `UI_AUTO_OPEN`, `UI_ENABLED`. Logs também são escritos em `apps/bot/logs/session.log` (truncado a cada startup, gitignored).
 
 Quando confiar que tá estável, ligue **headless mode** no `.env`:
 
@@ -98,7 +103,9 @@ Aí o bot roda invisível em background.
 ## Debugging
 
 ```bash
-node --inspect src/index.js --once
+cd apps/bot && node --inspect src/index.js --once
+# ou via script do workspace:
+# pnpm --filter @gladibot/bot tick -- --yes
 ```
 
 Abre `edge://inspect` no seu Edge → "inspect" → DevTools completo do Node (breakpoints, Network, Console, etc).
@@ -106,27 +113,31 @@ Abre `edge://inspect` no seu Edge → "inspect" → DevTools completo do Node (b
 ## Estrutura
 
 ```
-src/
-  index.js          entry, parseia flags, orquestra
-  config.js         carrega .env
-  log.js            logger (console + ring buffer + logs/session.log)
-  botState.js       singleton in-memory: snapshot, loopStatus, logs (ring 200)
-  browser.js        Playwright bootstrap + readSession + refreshSession
-  client.js         HTTP client em cima de page.request, com retry em 401/403
-  state.js          parser de overview HTML + merge com JSON AJAX
-  orchestrator.js   tick: heal → expedição → masmorra → work
-  actions/
-    expedition.js   POST /game/ajax.php?mod=location&submod=attack
-    dungeon.js      parse fights + GET /game/ajax/doDungeonFight.php
-    heal.js         POST /game/ajax.php?mod=inventory&submod=move
-    work.js         POST /game/index.php?mod=work&submod=start
-  ui/
-    server.js       Express, endpoints /api/state /logs /tick /pause /resume
-    public/         index.html + styles.css + app.js (vanilla, polling 2s)
+apps/bot/
+  src/
+    index.js          entry, parseia flags, orquestra
+    config.js         carrega .env do root do repo via path absoluto
+    log.js            logger (console + ring buffer + apps/bot/logs/session.log)
+    botState.js       singleton in-memory: snapshot, loopStatus, logs (ring 200)
+    browser.js        Playwright bootstrap + readSession + refreshSession
+    client.js         HTTP client em cima de page.request, com retry em 401/403
+    state.js          parser de overview HTML + merge com JSON AJAX
+    orchestrator.js   tick: heal → expedição → masmorra → work
+    actions/
+      expedition.js   POST /game/ajax.php?mod=location&submod=attack
+      dungeon.js      parse fights + GET /game/ajax/doDungeonFight.php
+      heal.js         POST /game/ajax.php?mod=inventory&submod=move
+      work.js         POST /game/index.php?mod=work&submod=start
+    ui/
+      server.js       Express, endpoints /api/state /logs /tick /pause /resume
+      public/         index.html + styles.css + app.js (vanilla, polling 2s)
+  data/
+    affixes.json      catálogo de afixos
+    formulas.json     catálogo de fórmulas
 docs/
-  memory.md         contexto histórico
-  flows.md          fluxogramas
-  endpoints.md      catálogo das rotas AJAX
+  memory.md           contexto histórico
+  flows.md            fluxogramas
+  endpoints.md        catálogo das rotas AJAX
 ```
 
 ## Limitações conscientes
@@ -159,6 +170,6 @@ Detalhe em `docs/DEVELOPMENT_WORKFLOW.md`. TL;DR:
 
 1. Abre Claude Code com browsermcp na aba do Gladiatus
 2. Captura cURL via DevTools no fluxo manual
-3. Atualiza `docs/endpoints.md` + adiciona `src/actions/<feature>.js`
-4. Plugar no `orchestrator.js` se for parte do loop
+3. Atualiza `docs/endpoints.md` + adiciona `apps/bot/src/actions/<feature>.js`
+4. Plugar no `apps/bot/src/orchestrator.js` se for parte do loop
 5. `/checkpoint` antes do commit (sync docs + memória)

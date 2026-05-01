@@ -1,22 +1,22 @@
 {
   "name": "gladibot",
-  "version": "0.1.0",
-  "description": "Gladiatus automation bot using Playwright for session + AJAX for actions",
-  "type": "module",
+  "version": "0.2.0",
   "private": true,
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "loop": "node src/index.js --loop",
-    "tick": "node src/index.js --once",
-    "postinstall": "playwright install msedge || playwright install chromium"
-  },
+  "description": "Gladiatus bot monorepo (TurboRepo + pnpm)",
+  "packageManager": "pnpm@10.32.1",
   "engines": {
-    "node": ">=18"
+    "node": ">=18.17",
+    "pnpm": ">=10"
   },
-  "dependencies": {
-    "dotenv": "^16.4.5",
-    "express": "^5.2.1",
-    "playwright": "^1.49.1"
+  "scripts": {
+    "tick": "pnpm --filter @gladibot/bot tick",
+    "loop": "pnpm --filter @gladibot/bot loop",
+    "ui": "pnpm --filter @gladibot/bot ui",
+    "bot:tick": "pnpm --filter @gladibot/bot tick",
+    "bot:loop": "pnpm --filter @gladibot/bot loop",
+    "bot:ui": "pnpm --filter @gladibot/bot ui"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
   }
 }

@@ -31,10 +31,10 @@ Rode `git status --short`. Se houver mudanças não-commitadas sem relação cla
 
 **PLAN:**
 1. **Endpoints novos** (se aplicável): mapear via DevTools + atualizar `docs/endpoints.md`
-2. **State / parser** (`src/state.js`): novos campos do snapshot, parser defensivo
-3. **Action** (`src/actions/<nome>.js`): contrato, retornos, side-effects gateados por `isActionsEnabled()`
-4. **Orchestrator** (`src/orchestrator.js`): onde plugar no tick, ordem de execução, fallbacks
-5. **UI** (`src/ui/server.js` + `public/`, ou futuro `apps/web/`): endpoints REST + componentes
+2. **State / parser** (`apps/bot/src/state.js`): novos campos do snapshot, parser defensivo
+3. **Action** (`apps/bot/src/actions/<nome>.js`): contrato, retornos, side-effects gateados por `isActionsEnabled()`
+4. **Orchestrator** (`apps/bot/src/orchestrator.js`): onde plugar no tick, ordem de execução, fallbacks
+5. **UI** (`apps/bot/src/ui/server.js` + `public/`, ou futuro `apps/web/`): endpoints REST + componentes
 6. **Docs:** PROJECT_STATE, DECISIONS (se DEC novo), endpoints, flows, CODE_PATTERNS conforme escopo
 
 **RISCOS:** débitos colidentes (DEBT-XX), DECs aplicáveis, side-effects no servidor do jogo, custo em ouro/cooldowns
@@ -48,7 +48,7 @@ Rode `git status --short`. Se houver mudanças não-commitadas sem relação cla
 
 ## Regras
 
-- Cite **paths absolutos** (`src/actions/auction.js:42`) — sem isso o builder erra.
+- Cite **paths absolutos** (`apps/bot/src/actions/auction.js:42`) — sem isso o builder erra.
 - Decisões controversas → **`OPEN`**, não decida sozinho.
 - KISS — sem layers de abstração que o projeto não adota. `Module → Action → Orchestrator`, sem subpastas `domain/`/`infra/`.
 - Você não escreve código de aplicação. Sua única escrita: `docs/wip/<slug>.md`. Exceção: novo `DEC-XX` em `docs/DECISIONS.md` apenas com aprovação explícita.
@@ -58,10 +58,10 @@ Rode `git status --short`. Se houver mudanças não-commitadas sem relação cla
 
 ## Áreas que exigem cuidado extra
 
-- `src/browser.js` / `src/client.js` — sessão e CSRF. Mudança aqui pode quebrar todo retry de 401/403.
-- `src/state.js` — parsers de HTML defensivos. HTML do jogo é malformado; mudanças pedem casos de teste.
-- `src/orchestrator.js` — ordem do tick (heal → exp → masm → work). Reordenar exige justificativa em DEC.
-- `data/affixes.json` / `data/formulas.json` — catálogos com 200+ entradas. Mudanças pedem validação empírica.
+- `apps/bot/src/browser.js` / `apps/bot/src/client.js` — sessão e CSRF. Mudança aqui pode quebrar todo retry de 401/403.
+- `apps/bot/src/state.js` — parsers de HTML defensivos. HTML do jogo é malformado; mudanças pedem casos de teste.
+- `apps/bot/src/orchestrator.js` — ordem do tick (heal → exp → masm → work). Reordenar exige justificativa em DEC.
+- `apps/bot/data/affixes.json` / `apps/bot/data/formulas.json` — catálogos com 200+ entradas. Mudanças pedem validação empírica.
 
 ## Após entregar
 

@@ -36,7 +36,7 @@ Após aprovação do plano:
 ### Fase 3 — Review (`code-reviewer`)
 
 1. Invocar `code-reviewer` via Agent tool (`subagent_type: "code-reviewer"`, `model: "sonnet"`).
-2. Agente roda gates (`node src/index.js --once` smoke, `bash docs/validate-docs.sh`, `tsc --noEmit` quando TS instalado, `pnpm --filter web build` quando `apps/web` existir).
+2. Agente roda gates (`pnpm tick` smoke ou `pnpm --filter @gladibot/bot tick`, `bash docs/validate-docs.sh`, `tsc --noEmit` quando TS instalado, `pnpm --filter web build` quando `apps/web` existir).
 3. Verifica regras arquiteturais 1-7, `isActionsEnabled()` em todo write, `fetchRawHtml` em checks secundários, sem cache de tokens, sem hardcode de servidor.
 4. Reporta achados (🔴 blockers / 🟠 ressalvas / 🟡 nits / ✅ praises) + recomendações para `doc-keeper`.
 5. **PAUSE** se houver blockers. Aguarde aprovação de fix ou ajuste — Fase 2 pode ser re-executada com escopo cirúrgico.

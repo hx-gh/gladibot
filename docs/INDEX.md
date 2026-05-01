@@ -80,5 +80,5 @@ updated: 2026-04-28
 > Verificar antes de iniciar qualquer trabalho.
 
 - 🟠 **Endpoints `/work` e dungeon-restart `Normal` não capturados** ([[TECHNICAL_DEBT]] DEBT-01, DEBT-02). Bot fica idle quando ambos os pontos zeram, ou quando boss cai.
-- 🟡 **Sessão expira eventualmente.** Refresh manual via repetir `node src/index.js --once` e completar login no browser ([[TECHNICAL_DEBT]] DEBT-03).
+- 🟡 **Sessão expira eventualmente.** Refresh manual via repetir `pnpm tick` e completar login no browser ([[TECHNICAL_DEBT]] DEBT-03).
 - 🟡 **`stage` da expedição** é 1-based (Escaravelho = `stage=2`). Validado por 1 caso só. Se trocar de inimigo e quebrar, reverificar.

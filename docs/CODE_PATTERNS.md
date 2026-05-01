@@ -17,7 +17,7 @@ updated: 2026-04-28
 
 ## Logging
 
-- Logger leve em `src/log.js`. Níveis: `debug | info | warn | error`.
+- Logger leve em `apps/bot/src/log.js`. Níveis: `debug | info | warn | error`.
 - Threshold via `LOG_LEVEL` no `.env`.
 
 ```js
@@ -31,7 +31,7 @@ log.error('fatal:', e?.stack || e);      // saídas
 
 ## Configuração
 
-- `src/config.js` carrega `.env` via `dotenv`, valida ausentes, expõe objeto tipado por convenção.
+- `apps/bot/src/config.js` carrega `.env` do root do repo via path absoluto (dotenv), valida ausentes, expõe objeto tipado por convenção.
 - **Nunca** ler `process.env.X` direto fora de `config.js`.
 
 ```js
@@ -41,7 +41,7 @@ const { baseUrl, expedition } = config;
 
 ## HTTP client
 
-- `src/client.js` encapsula `page.request` do Playwright.
+- `apps/bot/src/client.js` encapsula `page.request` do Playwright.
 - Métodos: `getHtml`, `getAjax`, `postForm`. Cada um seta o `accept` correto.
 - `_exec` faz retry automático em 401/403 chamando `refreshSession`.
 - **Sempre** passar `params` via `buildUrl`, nunca concatenar string.
@@ -58,7 +58,7 @@ const text = await client.getAjax(`/game/ajax.php?mod=location&submod=attack&loc
 
 ## Actions
 
-Cada arquivo em `src/actions/` exporta funções com a assinatura:
+Cada arquivo em `apps/bot/src/actions/` exporta funções com a assinatura:
 
 ```js
 export async function actionName(client, state, ...optional) {
@@ -79,7 +79,7 @@ export async function actionName(client, state, ...optional) {
 
 ## Parser de estado
 
-`src/state.js#parseOverview(html)` retorna shape:
+`apps/bot/src/state.js#parseOverview(html)` retorna shape:
 
 ```js
 {
@@ -105,7 +105,7 @@ export async function actionName(client, state, ...optional) {
 ## Testes
 
 - _Não há suite formal por enquanto (1 dev, MVP)._
-- Sanity check: `node src/index.js --once` antes de commit.
+- Sanity check: `pnpm tick` (do root) antes de commit.
 - Em mudanças de parser, escrever script ad-hoc em `docs/wip/` que carrega um HTML salvo e roda `parseOverview`.
 
 ## Anti-padrões observados (do que NÃO fazer)

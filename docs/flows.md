@@ -194,7 +194,7 @@ Quando descobrir uma feature nova do jogo que queremos automatizar:
 
 1. **Mapear via chat:** abrir Claude Code, conectar browsermcp na aba do Gladiatus, navegar até a feature, snapshotar estado.
 2. **Capturar request HTTP:** clicar a ação manualmente com DevTools Network aberto, copiar como cURL.
-3. **Adicionar bridge** (se o controle for `<img onclick>` invisível pra acessibilidade): estender `gladibot-bridge.user.js` pra expor como `<a>`.
+3. **Controle invisível** (se for `<img onclick>` sem aria-label): usar userscript Tampermonkey ad-hoc para expor o controle via browsermcp e capturar o cURL; descartar após mapear.
 4. **Documentar** o endpoint em `docs/endpoints.md` e o fluxo aqui.
-5. **Implementar** action correspondente em `src/actions/`.
+5. **Implementar** action correspondente em `apps/bot/src/actions/`.
 6. **Plugar no orchestrator** se for parte do loop.

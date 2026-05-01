@@ -1,4 +1,11 @@
-import 'dotenv/config';
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// apps/bot/src/config.js -> repo root = three levels up
+const repoRoot = path.resolve(__dirname, "..", "..", "..");
+dotenv.config({ path: path.join(repoRoot, ".env") });
 
 function bool(s, def = false) {
   if (s === undefined) return def;
@@ -9,7 +16,7 @@ export const config = {
   baseUrl: process.env.BASE_URL || 'https://s62-br.gladiatus.gameforge.com',
   lobbyUrl: process.env.LOBBY_URL || 'https://lobby.gladiatus.gameforge.com/',
   browser: {
-    userDataDir: process.env.USER_DATA_DIR || './browser-data',
+    userDataDir: process.env.USER_DATA_DIR || path.join(repoRoot, "browser-data"),
     channel: process.env.BROWSER_CHANNEL || 'msedge',
     headless: bool(process.env.HEADLESS, false),
   },

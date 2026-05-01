@@ -1,12 +1,35 @@
+# Dependências
 node_modules/
+**/node_modules/
+
+# Segredos / sessão
 .env
 browser-data/
+
+# Logs (gerados em apps/bot/logs/ pós-migração)
 logs/
+apps/bot/logs/
 *.log
-.DS_Store
-.claude/settings.local.json
+
+# DB e raw scrapes (em apps/bot/data/ pós-migração)
+apps/bot/data/raw/
+apps/bot/data/state.db
+apps/bot/data/state.db-journal
+apps/bot/data/state.db-shm
+apps/bot/data/state.db-wal
+
+# DB antigo (root/data — rede de proteção por 1-2 PRs)
 data/raw/
 data/state.db
 data/state.db-journal
 data/state.db-shm
 data/state.db-wal
+
+# OS
+.DS_Store
+
+# Claude local overrides
+.claude/settings.local.json
+
+# Turbo cache
+.turbo/

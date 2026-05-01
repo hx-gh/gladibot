@@ -37,11 +37,11 @@ updated: 2026-04-28
 
 **Data:** 2026-04-28
 **Contexto:** Controles do tipo `<img onclick="startFight(...)">` não aparecem na árvore de acessibilidade — `browsermcp` não consegue clicar.
-**Decisão:** O Tampermonkey userscript `gladibot-bridge.user.js` cria `<a aria-label>` pra cada controle invisível, **apenas durante o desenvolvimento via Claude+browsermcp**. Depois de mapear o endpoint AJAX real (via DevTools Network), o bot Node usa o endpoint diretamente — não depende mais do bridge.
+**Decisão:** Userscript Tampermonkey ad-hoc cria `<a aria-label>` pra cada controle invisível, **apenas durante o desenvolvimento via Claude+browsermcp**. Depois de mapear o endpoint AJAX real (via DevTools Network), o bot Node usa o endpoint diretamente. O arquivo `gladibot-bridge.user.js` foi removido do repo no PR 2 (monorepo skeleton) — abordagem ad-hoc é preferível a manter um arquivo versionado que só serve ao mapeamento.
 **Alternativas rejeitadas:**
 - *Bridge em runtime do bot*: implicaria rodar Tampermonkey + browser visível 24/7 só pra fazer ações.
 - *Simular drag-drop com mouse events*: frágil (jQuery UI muda comportamento), lento.
-**Consequências:** Bot runtime é puro Node + Playwright + HTTP. O bridge fica como ferramenta de mapeamento — sempre que descobrirmos novo controle invisível, estendemos o bridge, capturamos cURL via DevTools, e plugamos no Node.
+**Consequências:** Bot runtime é puro Node + Playwright + HTTP. Mapeamento de novos controles invisíveis: criar userscript temporário no Tampermonkey, capturar cURL, deletar o script.
 
 ---
 
@@ -460,6 +460,18 @@ Toolchain: TurboRepo + pnpm@10 (paridade dtp-monorepo). Branch model: `main` (pr
 - *Hosting full com credenciais Google armazenadas*: LGPD/GDPR obrigatórios, risco de ban multiplicado, custo de infra ~300-500MB RAM/Playwright por usuário.
 - *Self-hosted SaaS (cliente roda Docker próprio)*: elimina receita recorrente de hosting.
 **Consequências:** PR 5+ bloqueado até DEC-PEND-07..12 decididas (auth multi-tenant, billing Stripe, compliance TOS Gladiatus, anti-bot detection, custo operacional). Implementação pelo agente `tech-architect` via `/implement hosting-saas`. Mercado expandido de BR62 para todos os servidores Gladiatus — parser e config assumem multi-servidor desde PR 4.
+
+---
+
+### [DEC-30] CWD canônico do bot é `apps/bot/`
+
+**Data:** 2026-05-01
+**Contexto:** No monorepo skeleton (PR 2), `formulas.js`, `db.js` e `log.js` usam `path.resolve('data/...')` e `path.resolve('logs/...')` relativos ao CWD de runtime. Rodar `node apps/bot/src/index.js` diretamente da raiz do repo quebra esses resolves (o CWD é o root, não `apps/bot/`).
+**Decisão:** O CWD canônico do bot em runtime é `apps/bot/`. Os comandos recomendados são `pnpm tick` / `pnpm loop` (via `turbo run` configurado no `apps/bot/package.json`, que garante o CWD correto) ou `cd apps/bot && node src/index.js`. Documentação de debugging e README não exibem o atalho `node apps/bot/src/index.js` do root.
+**Alternativas rejeitadas:**
+- *Refatorar todos os 5 sites CWD-dependent para `path.resolve(__dirname, ...)`*: custo de refactor > benefício num PR estrutural; PR 3 (TypeScript) pode absorver isso como efeito colateral natural.
+- *Usar variável de ambiente `BOT_ROOT` para resolver caminhos*: overhead de config sem ganho claro agora.
+**Consequências:** `node apps/bot/src/index.js --once` direto do root do repo falha com erro de path. Workaround: `cd apps/bot` primeiro, ou usar `pnpm tick`. Novos arquivos do bot que façam IO de filesystem devem usar `path.resolve(__dirname, ...)` quando precisarem ser invocáveis de qualquer CWD; caso contrário, documentar que o CWD esperado é `apps/bot/`.
 
 ---
 

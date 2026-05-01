@@ -24,8 +24,8 @@ Se `develop` não existir, use `main`. Se ambos falharem, use `HEAD~1..HEAD`.
 Execute os comandos abaixo e capture o resultado de cada um. **Se algum falhar, registre no relatório e marque como bloqueante.**
 
 ```bash
-# Smoke do bot — funciona pré e pós monorepo
-node src/index.js --once 2>&1 || pnpm --filter bot tick 2>&1 || echo "bot smoke não rodável"
+# Smoke do bot
+pnpm tick 2>&1 || pnpm --filter @gladibot/bot tick 2>&1 || echo "bot smoke não rodável"
 
 # Type-check (quando TS instalado)
 pnpm --filter bot typecheck 2>/dev/null || echo "typecheck não configurado"
@@ -118,7 +118,7 @@ reviewer: Claude Code
 
 | Etapa | Resultado |
 |---|---|
-| `node src/index.js --once` (smoke) | ✅ Passou \| ❌ Falhou \| ⚪ N/A |
+| `pnpm tick` (smoke) | ✅ Passou \| ❌ Falhou \| ⚪ N/A |
 | `pnpm --filter bot typecheck` | ✅ Passou \| ❌ Falhou \| ⚪ N/A |
 | `pnpm --filter web build` | ✅ Passou \| ❌ Falhou \| ⚪ N/A |
 | `bash docs/validate-docs.sh` | ✅ Passou \| ❌ Falhou |

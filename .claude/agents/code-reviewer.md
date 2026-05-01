@@ -28,7 +28,7 @@ git log --oneline -5
 
 ## Gates a rodar
 
-- **Smoke** (sempre): `node src/index.js --once` precisa terminar sem erro fatal. Pode falhar com mensagem de "sessão expirada" — isso é OK (só significa precisar relogin manual no browser).
+- **Smoke** (sempre): `pnpm tick` (do root) ou `pnpm --filter @gladibot/bot tick` — precisa terminar sem erro fatal. Pode falhar com mensagem de "sessão expirada" — isso é OK (só significa precisar relogin manual no browser).
 - **Type-check** (quando TS estiver instalado): `pnpm --filter bot typecheck` ou equivalente.
 - **Build web** (quando `apps/web` existir): `pnpm --filter web build`.
 - **Validate docs:** `bash docs/validate-docs.sh` → 0 erros.
@@ -50,7 +50,7 @@ Iteração: até 3 tentativas por gate. Falhou? Status = 🔴 BLOQUEADO + report
 7. **Kill switch ausente** — toda action que faz `client.post` ou `client.get` com side-effect no jogo precisa checar `isActionsEnabled()` antes.
 8. **`fetchRawHtml` faltando em check secundário** — `client.getHtml` num lugar que pode rodar concorrente com o tick principal causa `ERR_ABORTED`. Use `fetchRawHtml` em vez.
 9. **Cache de `sh`/`csrf`/cookies em arquivo versionado** — incluindo logs com tokens completos.
-10. **Hardcode de URL/IDs do servidor** (BR62 ou outro) fora de `.env`/`src/config.js`.
+10. **Hardcode de URL/IDs do servidor** (BR62 ou outro) fora de `.env`/`apps/bot/src/config.js`.
 11. **Logging de tokens** — `log.debug(req.headers)` sem mask.
 12. **Gate falhou** após 3 tentativas.
 13. **Convenção de commit fora do padrão** — title sem `<tipo>(<escopo>):`, sem imperativo, ou `Co-Authored-By: Claude` / footer "Generated with Claude Code" presentes.
