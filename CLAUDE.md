@@ -1,13 +1,50 @@
 # CLAUDE.md — gladibot
 
+## Framework de Trabalho
+
+Este projeto opera em modo **arquiteto + agentes**. Você fala com Claude (orquestrador); Claude despacha agentes especializados via Agent tool. **Use as skills abaixo — não improvise o ciclo.**
+
+### Workflow obrigatório por tipo de tarefa
+
+| Tipo de tarefa | Skill |
+|---|---|
+| Feature nova ou débito > 4h | `/implement <slug>` |
+| Mudança manual já feita, sincronizar antes do commit | `/checkpoint` |
+| Suspeita de drift entre código e docs/memória | `/audit-sync` |
+| Review do diff da branch atual | `/review-pr` |
+
+### Agentes ativos (`.claude/agents/`)
+
+| Agente | Modelo | Responsabilidade |
+|---|---|---|
+| `tech-architect` | Opus | Plano técnico → `docs/wip/<slug>.md` |
+| `bot-builder` | Sonnet | Implementa Node+Playwright+AJAX e (futuro) Next.js conforme plano |
+| `code-reviewer` | Sonnet | Pré-commit DoD + regras arquiteturais 1-7 + security smells |
+| `doc-keeper` | Haiku (escala em diff grande) | Sincroniza docs do repo + memórias Claude antes do commit |
+
+### Regras invariantes do framework
+
+1. **Nunca commitar sozinho.** Após `doc-keeper` rodar, apresentar diff e mensagem sugerida; usuário decide.
+2. **Em conflito memória vs. repo, repo vence.** `docs/PROJECT_STATE.md` é fonte de verdade; memória atualiza para refletir.
+3. **Agentes não criam docs novos** em `docs/`. Se demanda surgir, reportar ao usuário.
+4. **Hook PostToolUse** loga em `docs/wip/.session-changes.log` (gitignored). Não tocar manualmente — `doc-keeper` consome e trunca.
+5. **Sem `Co-Authored-By: Claude`** ou footer "Generated with Claude Code" em commits.
+6. **Edições em bloco**: ao modificar um arquivo, aplicar todas as alterações de uma vez — nunca linha por linha.
+
+### Prompt consolidado
+
+`prompt.bot.md` no root é o **guia consolidado** que `bot-builder` e `code-reviewer` carregam. Concentra: stack, regras invariantes (1-7 abaixo), padrões de código, DoD, limites duros. Detalhe completo continua nos docs específicos (`CODE_PATTERNS.md`, `endpoints.md`, `flows.md`, `memory.md`).
+
+---
+
 ## Visão Geral
 
 **Nome**: `gladibot`
-**Descrição**: Bot de automação para o jogo de navegador **Gladiatus** (servidor BR62 Speed x5). Foco inicial: drenar pontos de expedição e masmorra, curar quando necessário, mandar pra trabalho quando esgotar.
+**Descrição**: Bot de automação para o jogo de navegador **Gladiatus** (BR62 Speed x5 hoje; alvo: todos os servidores). Foco inicial: drenar pontos de expedição e masmorra, curar quando necessário, mandar pra trabalho quando esgotar.
 
-**Stack**: Node.js 18+ (ESM) + Playwright (msedge channel, persistent context) + AJAX HTTP direto.
+**Stack**: Node.js 18+ (ESM) + Playwright (msedge channel, persistent context) + AJAX HTTP direto. TypeScript, monorepo TurboRepo+pnpm e Next.js+Tailwind+shadcn estão na pista de migração — ver `docs/wip/framework-monorepo-migration.md`.
 
-**Escopo**: 1 personagem, 1 servidor, 1 dev. Single-package — não é monorepo, não tem backend/frontend split, nem migrations/CI/CD.
+**Escopo atual**: 1 personagem, 1 servidor, 1 dev. **Roadmap:** monorepo + Next.js + multi-server + hosting BYOK (R$50/mês).
 
 ## Documentos de referência
 
@@ -159,6 +196,7 @@ Ver `docs/CODE_PATTERNS.md`. Resumo:
 - Mexer em `browser-data/` (perfil do browser).
 - Hardcodar URLs/IDs específicos do servidor BR62 fora de `.env`/`config.js`.
 - Criar memória que duplique conteúdo de `docs/` versionados — memórias só pra contexto/decisões/preferências.
+- Adicionar `Co-Authored-By: Claude` ou footer "Generated with Claude Code" em commits (regra do framework adotado).
 
 ## Documentação Contínua (Definition of Done)
 

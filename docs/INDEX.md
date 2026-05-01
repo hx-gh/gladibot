@@ -55,13 +55,22 @@ updated: 2026-04-28
 
 ---
 
-## Sistema Claude
+## Sistema Claude (Framework arquiteto + agentes)
 
 | Diretório/arquivo | Conteúdo |
 |---|---|
 | `.claude/settings.json` | Permissions + hook PostToolUse de session log |
-| `.claude/commands/` | Slash commands (`/checkpoint`) |
-| `.claude/agents/` | Subagents (`doc-keeper`) |
+| `.claude/commands/implement.md` | `/implement` — ciclo completo: plano → builder → review → checkpoint |
+| `.claude/commands/checkpoint.md` | `/checkpoint` — sync docs+memória antes do commit |
+| `.claude/commands/audit-sync.md` | `/audit-sync` — drift entre código e docs |
+| `.claude/commands/review-pr.md` | `/review-pr` — review automatizado, gera `docs/reviews/...` |
+| `.claude/agents/tech-architect.md` | Plano técnico → `docs/wip/<slug>.md` (Opus) |
+| `.claude/agents/bot-builder.md` | Implementa bot/web conforme plano (Sonnet) |
+| `.claude/agents/code-reviewer.md` | Pré-commit DoD + regras 1-7 (Sonnet) |
+| `.claude/agents/doc-keeper.md` | Sync docs+memória (Haiku) |
+| [[../prompt.bot]] | Guia consolidado de regras vigentes (consumido por `bot-builder` e `code-reviewer`) |
+| [[validate-docs.sh]] | Script de gate de consistência docs ⇄ repo |
+| `docs/reviews/` | Relatórios `review-<branch>-<data>.md` gerados por `/review-pr` |
 | `docs/wip/.session-changes.log` | Log gitignored alimentado pelo hook (consumido pelo `doc-keeper`) |
 
 ---
